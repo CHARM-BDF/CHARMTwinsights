@@ -36,6 +36,16 @@ def main():
         res = []
         for i, x in enumerate(X):
             print(f"Generating synthetic data for request {i+1}/{len(X)}", file=sys.stderr)
+            
+            # Convert float parameters to integers where needed
+            # DPCGANS expects certain parameters to be integers
+            if 'num_rows' in x:
+                x['num_rows'] = int(x['num_rows'])
+            if 'max_retries' in x:
+                x['max_retries'] = int(x['max_retries'])
+            if 'max_rows_multiplier' in x:
+                x['max_rows_multiplier'] = int(x['max_rows_multiplier'])
+            
             yhat = model.sample(**x)
             # result is a df; we need to convert NaNs to Nones so we can serialize to json properly
             yhat = yhat.replace({np.nan: None})

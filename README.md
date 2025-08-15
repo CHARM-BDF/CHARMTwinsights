@@ -77,7 +77,12 @@ docker compose up --detach
 
 The `build_all.sh` script builds both the application images and the built-in ML models. All `docker compose` commands need to be run in the same directory as the `docker-compose.yml` file.
 
-The main API endpoints will be browsable at [`http://localhost:8000/docs`](http://localhost:8000/docs). All built-in models (IrisModel, CoxCOPDModel, DPCGANSModel) will be automatically available.
+**Access Points:**
+- API Documentation: http://localhost:8000/docs
+- Streamlit UI (in development): http://localhost:8502
+- Vue UI (in development): http://localhost:8005
+
+All built-in models (IrisModel, CoxCOPDModel, DPCGANSModel) will be automatically available.
 
 
 ### 2. Generate Synthetic Data
