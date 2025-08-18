@@ -333,6 +333,106 @@ async def visualize_procedures_by_age(
     return await fhir_processor.visualize_resource_by_age_bracket('Procedure', limit, bracket_size, cohort_id)
 
 
+@app.get("/visualize-medications", response_class=Response)
+async def visualize_medications(
+    limit: int = Query(10, description="Limit the number of medications to show"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common medications.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of medications to show
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    return await fhir_processor.visualize_resource('MedicationRequest', limit, cohort_id)
+
+
+@app.get("/visualize-medications-by-gender", response_class=Response)
+async def visualize_medications_by_gender(
+    limit: int = Query(10, description="Limit the number of medications to show per gender"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common medications broken down by gender.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of medications to show per gender
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    return await fhir_processor.visualize_resource_by_gender('MedicationRequest', limit, cohort_id)
+
+
+@app.get("/visualize-medications-by-age", response_class=Response)
+async def visualize_medications_by_age(
+    limit: int = Query(10, description="Limit the number of medications to show per age bracket"),
+    bracket_size: int = Query(5, description="Size of each age bracket in years"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common medications broken down by age brackets.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of medications to show per age bracket
+    - bracket_size: Size of each age bracket in years
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    return await fhir_processor.visualize_resource_by_age_bracket('MedicationRequest', limit, bracket_size, cohort_id)
+
+
+@app.get("/visualize-diagnostics", response_class=Response)
+async def visualize_diagnostics(
+    limit: int = Query(10, description="Limit the number of diagnostic reports to show"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common diagnostic report types.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of diagnostic report types to show
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    return await fhir_processor.visualize_resource('DiagnosticReport', limit, cohort_id)
+
+
+@app.get("/visualize-diagnostics-by-gender", response_class=Response)
+async def visualize_diagnostics_by_gender(
+    limit: int = Query(10, description="Limit the number of diagnostic report types to show per gender"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common diagnostic report types broken down by gender.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of diagnostic report types to show per gender
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    return await fhir_processor.visualize_resource_by_gender('DiagnosticReport', limit, cohort_id)
+
+
+@app.get("/visualize-diagnostics-by-age", response_class=Response)
+async def visualize_diagnostics_by_age(
+    limit: int = Query(10, description="Limit the number of diagnostic report types to show per age bracket"),
+    bracket_size: int = Query(5, description="Size of each age bracket in years"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common diagnostic report types broken down by age brackets.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of diagnostic report types to show per age bracket
+    - bracket_size: Size of each age bracket in years
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    return await fhir_processor.visualize_resource_by_age_bracket('DiagnosticReport', limit, bracket_size, cohort_id)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
