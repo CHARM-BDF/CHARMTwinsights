@@ -127,7 +127,7 @@ def main():
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox(
         "Select Page",
-        ["Dashboard", "Synthetic Data", "Models"]
+        ["Dashboard", "Synthetic Data", "Patient Browser", "Models"]
     )
     
     # System status in sidebar
@@ -145,6 +145,8 @@ def main():
         show_dashboard()
     elif page == "Synthetic Data":
         show_synthetic_data_lab()
+    elif page == "Patient Browser":
+        show_patient_browser()
     elif page == "Models":
         show_model_marketplace()
 
@@ -199,6 +201,487 @@ def show_dashboard():
         if st.button("View API", use_container_width=True):
             st.info("Access full REST API at http://localhost:8000/docs")
     
+
+def show_patient_browser():
+    """Patient data browser and analytics interface"""
+    st.header("Patient Data Browser")
+    st.markdown("Explore synthetic patient data with advanced analytics and visualizations")
+    
+    # Create tabs for different sections
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Patients", "Conditions", "Observations", "Procedures", "Cohorts"])
+    
+    with tab1:
+        show_patients_section()
+    
+    with tab2:
+        show_conditions_section()
+    
+    with tab3:
+        show_observations_section()
+    
+    with tab4:
+        show_procedures_section()
+    
+    with tab5:
+        show_cohorts_section()
+
+def show_patients_section():
+    """Patient listing and search"""
+    st.subheader("Patient Search & Listing")
+    
+    # Search controls
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        search_name = st.text_input("Search by Name", placeholder="Enter patient name")
+    
+    with col2:
+        search_gender = st.selectbox("Filter by Gender", ["All", "male", "female"])
+    
+    with col3:
+        search_date = st.date_input("Birth Date", value=None)
+    
+    # Advanced search
+    with st.expander("Advanced Search Options"):
+        col1, col2 = st.columns(2)
+        with col1:
+            count_limit = st.slider("Number of Results", min_value=1, max_value=100, value=20)
+        with col2:
+            if st.button("Clear Filters"):
+                st.rerun()
+    
+    # Search button and results
+    if st.button("Search Patients", type="primary"):
+        search_patients(search_name, search_gender, search_date, count_limit)
+    
+    # Also show the list all patients from synthea
+    st.markdown("---")
+    if st.button("List All Synthetic Patients"):
+        list_all_synthetic_patients()
+
+def search_patients(name, gender, birth_date, count):
+    """Search patients using the stats API"""
+    try:
+        params = {"_count": count}
+        if name:
+            params["name"] = name
+        if gender != "All":
+            params["gender"] = gender
+        if birth_date:
+            params["birthdate"] = birth_date.strftime("%Y-%m-%d")
+        
+        response = requests.get(f"{API_BASE}/stats/patients", params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data and "patients" in data and data["patients"]:
+                patients_list = data["patients"]
+                st.success(f"Found {len(patients_list)} patients")
+                
+                # Create patient table with proper field extraction
+                patient_data = []
+                for patient in patients_list:
+                    # Extract patient ID
+                    patient_id = patient.get("id") or patient.get("patientId", "N/A")
+                    
+                    # Extract name from FHIR structure
+                    name = "N/A"
+                    resource_name = patient.get("resource.name")
+                    if resource_name and isinstance(resource_name, list) and len(resource_name) > 0:
+                        name_obj = resource_name[0]
+                        given = name_obj.get("given", [])
+                        family = name_obj.get("family", "")
+                        if given and family:
+                            given_name = given[0] if isinstance(given, list) else given
+                            name = f"{given_name} {family}"
+                        elif family:
+                            name = family
+                        elif given:
+                            name = given[0] if isinstance(given, list) else given
+                    
+                    # Extract gender and birth date
+                    gender = patient.get("resource.gender", "N/A")
+                    birth_date = patient.get("resource.birthDate", "N/A")
+                    
+                    # Calculate age if possible
+                    age = "N/A"
+                    if birth_date != "N/A":
+                        try:
+                            birth_dt = datetime.strptime(birth_date, "%Y-%m-%d")
+                            today = datetime.now()
+                            age = today.year - birth_dt.year - ((today.month, today.day) < (birth_dt.month, birth_dt.day))
+                        except:
+                            age = "N/A"
+                    
+                    # Extract marital status
+                    marital_status = patient.get("resource.maritalStatus.text", "N/A")
+                    
+                    patient_data.append({
+                        "ID": patient_id,
+                        "Name": name,
+                        "Gender": gender.title() if gender != "N/A" else "N/A",
+                        "Age": age,
+                        "Birth Date": birth_date,
+                        "Marital Status": marital_status
+                    })
+                
+                df = pd.DataFrame(patient_data)
+                st.dataframe(df, use_container_width=True)
+                
+                # Summary stats
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Found", len(patients_list))
+                with col2:
+                    gender_counts = df["Gender"].value_counts()
+                    if len(gender_counts) > 0:
+                        most_common = gender_counts.index[0]
+                        st.metric("Most Common Gender", f"{most_common} ({gender_counts[most_common]})")
+                with col3:
+                    avg_age = df[df["Age"] != "N/A"]["Age"].astype(int).mean() if df[df["Age"] != "N/A"].shape[0] > 0 else "N/A"
+                    if avg_age != "N/A":
+                        st.metric("Average Age", f"{avg_age:.1f}")
+                    else:
+                        st.metric("Average Age", "N/A")
+                
+                # Patient details expansion
+                if len(patient_data) > 0:
+                    selected_patient = st.selectbox("Select patient for details", 
+                                                  [f"{p['ID']} - {p['Name']}" for p in patient_data])
+                    if selected_patient:
+                        patient_id = selected_patient.split(" - ")[0]
+                        show_patient_details(patient_id)
+            else:
+                st.info("No patients found with the specified criteria")
+        else:
+            st.error(f"Failed to search patients: {response.text}")
+    except Exception as e:
+        st.error(f"Error searching patients: {str(e)}")
+
+def list_all_synthetic_patients():
+    """List all synthetic patients from Synthea"""
+    try:
+        response = requests.get(f"{API_BASE}/synthetic/synthea/list-all-patients", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data and "patients" in data and len(data["patients"]) > 0:
+                patients_list = data["patients"]
+                st.success(f"Found {len(patients_list)} synthetic patients")
+                
+                # Create patient table
+                patient_data = []
+                all_cohorts = []
+                
+                for patient in patients_list:
+                    patient_id = patient.get("id", "N/A")
+                    gender = patient.get("gender", "N/A").title()
+                    ethnicity = patient.get("ethnicity", "N/A")
+                    birth_date = patient.get("birth_date", "N/A")
+                    
+                    # Handle cohort_ids
+                    cohort_ids = patient.get("cohort_ids", [])
+                    cohort_display = ", ".join(cohort_ids) if cohort_ids else "N/A"
+                    all_cohorts.extend(cohort_ids)
+                    
+                    # Calculate age
+                    age = "N/A"
+                    if birth_date != "N/A":
+                        try:
+                            birth_dt = datetime.strptime(birth_date, "%Y-%m-%d")
+                            today = datetime.now()
+                            age = today.year - birth_dt.year - ((today.month, today.day) < (birth_dt.month, birth_dt.day))
+                        except:
+                            age = "N/A"
+                    
+                    patient_data.append({
+                        "ID": patient_id,
+                        "Gender": gender,
+                        "Age": age,
+                        "Birth Date": birth_date,
+                        "Ethnicity": ethnicity,
+                        "Cohorts": cohort_display
+                    })
+                
+                # Display table
+                df = pd.DataFrame(patient_data)
+                st.dataframe(df, use_container_width=True)
+                
+                # Summary metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Patients", len(patients_list))
+                with col2:
+                    gender_counts = df["Gender"].value_counts()
+                    if len(gender_counts) > 0:
+                        most_common_gender = gender_counts.index[0]
+                        st.metric("Most Common Gender", f"{most_common_gender} ({gender_counts[most_common_gender]})")
+                with col3:
+                    unique_cohorts = len(set(all_cohorts))
+                    st.metric("Number of Cohorts", unique_cohorts)
+                
+            else:
+                st.info("No synthetic patients found")
+        else:
+            st.error(f"Failed to fetch synthetic patients: {response.text}")
+    except Exception as e:
+        st.error(f"Error fetching synthetic patients: {str(e)}")
+
+def show_patient_details(patient_id):
+    """Show detailed information for a specific patient"""
+    st.subheader(f"Patient Details: {patient_id}")
+    
+    try:
+        response = requests.get(f"{API_BASE}/stats/patients/{patient_id}/$everything", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            st.json(data)
+        else:
+            st.error(f"Failed to fetch patient details: {response.text}")
+    except Exception as e:
+        st.error(f"Error fetching patient details: {str(e)}")
+
+def show_conditions_section():
+    """Conditions analysis and visualization"""
+    st.subheader("Conditions Analysis")
+    
+    # Controls
+    col1, col2 = st.columns(2)
+    with col1:
+        limit = st.slider("Number of conditions to show", 5, 50, 20, key="conditions_limit")
+    with col2:
+        cohort_filter = st.text_input("Filter by Cohort ID", placeholder="Optional cohort filter", key="conditions_cohort")
+    
+    # Analysis tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["Overview", "By Gender", "By Age", "Data"])
+    
+    with tab1:
+        st.markdown("**Most Common Conditions**")
+        if st.button("Generate Conditions Visualization", key="viz_conditions"):
+            show_visualization_image("/stats/visualize-conditions", limit, cohort_filter)
+    
+    with tab2:
+        st.markdown("**Conditions by Gender**")
+        if st.button("Generate Gender Breakdown", key="viz_conditions_gender"):
+            show_visualization_image("/stats/visualize-conditions-by-gender", limit, cohort_filter)
+    
+    with tab3:
+        st.markdown("**Conditions by Age Groups**")
+        bracket_size = st.slider("Age bracket size (years)", 5, 20, 10, key="conditions_age_bracket")
+        if st.button("Generate Age Breakdown", key="viz_conditions_age"):
+            show_visualization_image("/stats/visualize-conditions-by-age", limit, cohort_filter, bracket_size)
+    
+    with tab4:
+        if st.button("Load Conditions Data", key="load_conditions_data"):
+            load_conditions_data()
+
+def show_observations_section():
+    """Observations analysis and visualization"""
+    st.subheader("Observations Analysis")
+    
+    # Controls
+    col1, col2 = st.columns(2)
+    with col1:
+        limit = st.slider("Number of observations to show", 5, 50, 20, key="observations_limit")
+    with col2:
+        cohort_filter = st.text_input("Filter by Cohort ID", placeholder="Optional cohort filter", key="observations_cohort")
+    
+    # Analysis tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["Overview", "By Gender", "By Age", "Data"])
+    
+    with tab1:
+        st.markdown("**Most Common Observations**")
+        if st.button("Generate Observations Visualization", key="viz_observations"):
+            show_visualization_image("/stats/visualize-observations", limit, cohort_filter)
+    
+    with tab2:
+        st.markdown("**Observations by Gender**")
+        if st.button("Generate Gender Breakdown", key="viz_observations_gender"):
+            show_visualization_image("/stats/visualize-observations-by-gender", limit, cohort_filter)
+    
+    with tab3:
+        st.markdown("**Observations by Age Groups**")
+        bracket_size = st.slider("Age bracket size (years)", 5, 20, 5, key="observations_age_bracket")
+        if st.button("Generate Age Breakdown", key="viz_observations_age"):
+            show_visualization_image("/stats/visualize-observations-by-age", limit, cohort_filter, bracket_size)
+    
+    with tab4:
+        if st.button("Load Observations Data", key="load_observations_data"):
+            load_observations_data()
+
+def show_procedures_section():
+    """Procedures analysis and visualization"""
+    st.subheader("Procedures Analysis")
+    
+    # Controls
+    col1, col2 = st.columns(2)
+    with col1:
+        limit = st.slider("Number of procedures to show", 5, 50, 20, key="procedures_limit")
+    with col2:
+        cohort_filter = st.text_input("Filter by Cohort ID", placeholder="Optional cohort filter", key="procedures_cohort")
+    
+    # Analysis tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["Overview", "By Gender", "By Age", "Data"])
+    
+    with tab1:
+        st.markdown("**Most Common Procedures**")
+        if st.button("Generate Procedures Visualization", key="viz_procedures"):
+            show_visualization_image("/stats/visualize-procedures", limit, cohort_filter)
+    
+    with tab2:
+        st.markdown("**Procedures by Gender**")
+        if st.button("Generate Gender Breakdown", key="viz_procedures_gender"):
+            show_visualization_image("/stats/visualize-procedures-by-gender", limit, cohort_filter)
+    
+    with tab3:
+        st.markdown("**Procedures by Age Groups**")
+        bracket_size = st.slider("Age bracket size (years)", 5, 20, 10, key="procedures_age_bracket")
+        if st.button("Generate Age Breakdown", key="viz_procedures_age"):
+            show_visualization_image("/stats/visualize-procedures-by-age", limit, cohort_filter, bracket_size)
+    
+    with tab4:
+        if st.button("Load Procedures Data", key="load_procedures_data"):
+            load_procedures_data()
+
+def show_cohorts_section():
+    """Cohort management and overview"""
+    st.subheader("Cohort Management")
+    
+    # List all cohorts
+    if st.button("List All Cohorts", key="list_cohorts"):
+        list_all_cohorts()
+    
+    st.markdown("---")
+    
+    # Cohort actions
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**Cohort Information**")
+        cohort_id_info = st.text_input("Cohort ID for metadata", placeholder="Enter cohort ID")
+        if st.button("Get Cohort Metadata", key="get_cohort_meta") and cohort_id_info:
+            get_cohort_metadata(cohort_id_info)
+    
+    with col2:
+        st.markdown("**Cohort Management**")
+        cohort_id_delete = st.text_input("Cohort ID to delete", placeholder="Enter cohort ID")
+        if st.button("Delete Cohort", key="delete_cohort", type="secondary") and cohort_id_delete:
+            if st.checkbox(f"Confirm deletion of cohort {cohort_id_delete}", key="confirm_delete"):
+                delete_cohort(cohort_id_delete)
+
+def show_visualization_image(endpoint, limit, cohort_filter=None, bracket_size=None):
+    """Display a visualization image from the stats API"""
+    try:
+        params = {"limit": limit}
+        if cohort_filter:
+            params["cohort_id"] = cohort_filter
+        if bracket_size is not None:
+            params["bracket_size"] = bracket_size
+        
+        response = requests.get(f"{API_BASE}{endpoint}", params=params, timeout=30)
+        
+        if response.status_code == 200:
+            # Check content type to handle different response formats
+            content_type = response.headers.get('content-type', '').lower()
+            
+            if 'image' in content_type:
+                # It's an image, display it directly
+                st.image(response.content, use_container_width=True)
+            elif 'json' in content_type:
+                # It's JSON, probably an error message
+                try:
+                    error_data = response.json()
+                    st.error(f"Visualization failed: {error_data}")
+                except:
+                    st.error(f"Visualization returned JSON instead of image: {response.text[:200]}...")
+            else:
+                # Unknown content type, show raw response for debugging
+                st.error(f"Unexpected content type: {content_type}")
+                with st.expander("Raw Response"):
+                    st.text(response.text[:500] + "..." if len(response.text) > 500 else response.text)
+        else:
+            st.error(f"Failed to generate visualization (HTTP {response.status_code}): {response.text}")
+    except Exception as e:
+        st.error(f"Error generating visualization: {str(e)}")
+        # Add debug info
+        if st.sidebar.checkbox("Show Debug Info", key="debug_viz"):
+            st.exception(e)
+
+def load_conditions_data():
+    """Load and display conditions data"""
+    try:
+        response = requests.get(f"{API_BASE}/stats/all-patient-conditions", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            st.json(data)
+        else:
+            st.error(f"Failed to load conditions data: {response.text}")
+    except Exception as e:
+        st.error(f"Error loading conditions data: {str(e)}")
+
+def load_observations_data():
+    """Load and display observations data"""
+    try:
+        response = requests.get(f"{API_BASE}/stats/all-patient-observations", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            st.json(data)
+        else:
+            st.error(f"Failed to load observations data: {response.text}")
+    except Exception as e:
+        st.error(f"Error loading observations data: {str(e)}")
+
+def load_procedures_data():
+    """Load and display procedures data"""
+    try:
+        response = requests.get(f"{API_BASE}/stats/all-patient-procedures", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            st.json(data)
+        else:
+            st.error(f"Failed to load procedures data: {response.text}")
+    except Exception as e:
+        st.error(f"Error loading procedures data: {str(e)}")
+
+def list_all_cohorts():
+    """List all available cohorts"""
+    try:
+        response = requests.get(f"{API_BASE}/synthetic/synthea/list-all-cohorts", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                st.json(data)
+            else:
+                st.info("No cohorts found")
+        else:
+            st.error(f"Failed to list cohorts: {response.text}")
+    except Exception as e:
+        st.error(f"Error listing cohorts: {str(e)}")
+
+def get_cohort_metadata(cohort_id):
+    """Get metadata for a specific cohort"""
+    try:
+        response = requests.get(f"{API_BASE}/synthetic/synthea/cohort-metadata/{cohort_id}", timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            st.json(data)
+        else:
+            st.error(f"Failed to get cohort metadata: {response.text}")
+    except Exception as e:
+        st.error(f"Error getting cohort metadata: {str(e)}")
+
+def delete_cohort(cohort_id):
+    """Delete a cohort"""
+    try:
+        response = requests.delete(f"{API_BASE}/synthetic/synthea/cohort/{cohort_id}", timeout=30)
+        if response.status_code == 200:
+            result = response.json()
+            st.success(f"Cohort deleted successfully: {result}")
+        else:
+            st.error(f"Failed to delete cohort: {response.text}")
+    except Exception as e:
+        st.error(f"Error deleting cohort: {str(e)}")
 
 def show_synthetic_data_lab():
     """Synthetic data generation interface"""
