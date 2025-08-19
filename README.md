@@ -87,6 +87,8 @@ All built-in models (IrisModel, CoxCOPDModel, DPCGANSModel) will be automaticall
 
 ### 2. Generate Synthetic Data
 
+**Note:** The Streamlit UI running on http://localhost:8502 is in early development, but also provides an interface for most of the API features described below.
+
 Synthetic patient data in FHIR format may be generated via a POST request to http://localhost:8000/synthetic/synthea/generate-synthetic-patients, with url parameters `num_patients`, `num_years`, 
 and `cohort_id`. The patients will be simulated with Synthea, and their records will be tagged with the provided `cohort_id` (defaulting to `default`).
 
