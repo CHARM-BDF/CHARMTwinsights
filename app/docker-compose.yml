@@ -9,6 +9,18 @@ services:
     depends_on:
       - router
 
+  streamlit_ui:
+    build: ./streamlit_ui
+    ports:
+      - "8502:8501"
+    depends_on:
+      router:
+        condition: service_started
+      model_server:
+        condition: service_healthy
+    environment:
+      - API_BASE=http://router:8000
+
   router:
     build: ./router
     ports:
