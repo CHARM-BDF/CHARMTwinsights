@@ -120,14 +120,14 @@ def get_system_stats() -> Dict[str, Any]:
 
 def main():
     # Header
-    st.markdown('<h1 class="main-header">🏥 CHARMTwinsights Research Studio</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Clinical AI Research Platform for Synthetic Data & Predictive Analytics</p>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">🏥 CHARMTwinsights</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Synthetic Data Generation & Predictive Analytics</p>', unsafe_allow_html=True)
     
     # Sidebar navigation
     st.sidebar.title("Navigation")
     page = st.sidebar.selectbox(
         "Select Page",
-        ["🏠 Dashboard", "🧬 Synthetic Data Lab", "🤖 Model Marketplace"]
+        ["Dashboard", "Synthetic Data", "Models"]
     )
     
     # System status in sidebar
@@ -141,11 +141,11 @@ def main():
         st.sidebar.markdown(f'<span class="{status_class}">{service}: {status_text}</span>', unsafe_allow_html=True)
     
     # Route to appropriate page
-    if page == "🏠 Dashboard":
+    if page == "Dashboard":
         show_dashboard()
-    elif page == "🧬 Synthetic Data Lab":
+    elif page == "Synthetic Data":
         show_synthetic_data_lab()
-    elif page == "🤖 Model Marketplace":
+    elif page == "Models":
         show_model_marketplace()
 
 def show_dashboard():
@@ -159,25 +159,25 @@ def show_dashboard():
     
     with col1:
         st.metric(
-            label="🤖 AI Models Available",
+            label="Models Available",
             value=stats["models_available"]
         )
     
     with col2:
         st.metric(
-            label="🏥 Services Online",
+            label="Services Online",
             value=f"{stats['services_healthy']}/{stats['total_services']}"
         )
     
     with col3:
         st.metric(
-            label="📊 System Health",
+            label="System Health",
             value="Operational" if stats['services_healthy'] >= 3 else "Degraded"
         )
     
     with col4:
         st.metric(
-            label="🔧 Platform Status",
+            label="Platform Status",
             value="Ready"
         )
     
@@ -188,37 +188,22 @@ def show_dashboard():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        if st.button("🧬 Generate Test Cohort", use_container_width=True):
-            st.info("Navigate to Synthetic Data Lab to generate patient cohorts")
+        if st.button("Generate Data", use_container_width=True):
+            st.info("Navigate to Synthetic Data page to generate patient cohorts")
     
     with col2:
-        if st.button("🤖 Test AI Models", use_container_width=True):
-            st.info("Navigate to Model Marketplace to test available models")
+        if st.button("Test Models", use_container_width=True):
+            st.info("Navigate to the Models page to test available models")
     
     with col3:
-        if st.button("📊 View API Docs", use_container_width=True):
-            st.info("Access full API documentation at http://localhost:8000/docs")
+        if st.button("View API", use_container_width=True):
+            st.info("Access full REST API at http://localhost:8000/docs")
     
-    # Platform overview
-    st.markdown("---")
-    st.subheader("Platform Capabilities")
-    
-    st.markdown("""
-    **🎯 Available Features:**
-    
-    - **🧬 Synthetic Data Generation**: Create FHIR-compliant synthetic patient cohorts with customizable demographics
-    - **🤖 AI Model Management**: Browse and test containerized machine learning models
-    - **⚡ Real-time Predictions**: Execute predictions with interactive parameter adjustment
-    - **📊 FHIR Data Integration**: Work with standardized healthcare data formats
-    - **🔧 REST API Access**: Full programmatic access to all platform features
-    
-    **🏥 Built for Clinical Researchers**: Professional tools for healthcare AI development
-    """)
 
 def show_synthetic_data_lab():
     """Synthetic data generation interface"""
-    st.header("🧬 Synthetic Data Laboratory")
-    st.markdown("Generate synthetic patient cohorts for research and model testing")
+    st.header("Synthetic Data Generation")
+    st.markdown("Generate synthetic patient cohorts")
     
     # Cohort configuration
     st.subheader("Cohort Configuration")
@@ -226,18 +211,18 @@ def show_synthetic_data_lab():
     col1, col2 = st.columns(2)
     
     with col1:
-        num_patients = st.slider("Number of Patients", min_value=1, max_value=1000, value=50)
+        num_patients = st.slider("Number of Patients", min_value=1, max_value=10, value=5)
         num_years = st.slider("Years of Medical History", min_value=1, max_value=20, value=5)
         cohort_id = st.text_input("Cohort ID", value="research-cohort", placeholder="Enter unique cohort identifier")
     
     with col2:
-        min_age = st.slider("Minimum Age", min_value=0, max_value=100, value=18)
-        max_age = st.slider("Maximum Age", min_value=0, max_value=100, value=80)
+        min_age = st.slider("Minimum Age", min_value=0, max_value=100, value=0)
+        max_age = st.slider("Maximum Age", min_value=0, max_value=100, value=90)
         gender = st.selectbox("Gender Distribution", ["both", "male", "female"])
         export_format = st.selectbox("Export Format", ["fhir", "csv"])
     
     # Generation controls
-    if st.button("🚀 Generate Synthetic Cohort", type="primary", use_container_width=True):
+    if st.button("Generate", type="primary", use_container_width=True):
         with st.spinner("Generating synthetic patients... This may take a few minutes."):
             try:
                 url = f"{API_BASE}/synthetic/synthea/generate-synthetic-patients"
@@ -255,7 +240,7 @@ def show_synthetic_data_lab():
                 
                 if response.status_code == 200:
                     result = response.json()
-                    st.success(f"✅ Successfully generated {num_patients} synthetic patients!")
+                    st.success(f"Successfully generated {num_patients} synthetic patients.")
                     
                     # Display results
                     st.subheader("Generation Results")
@@ -263,7 +248,7 @@ def show_synthetic_data_lab():
                     
                     # Show download option
                     if "cohort_id" in result:
-                        st.info(f"📁 Cohort saved as: `{result['cohort_id']}`")
+                        st.info(f"Cohort saved as: `{result['cohort_id']}`")
                 
                 else:
                     st.error(f"❌ Generation failed: {response.text}")
@@ -277,42 +262,77 @@ def show_synthetic_data_lab():
     st.markdown("---")
     st.subheader("Existing Synthetic Patients")
     
-    if st.button("📋 List Available Patients"):
+    if st.button("List Patients"):
         try:
             response = requests.get(f"{API_BASE}/stats/patients?_count=10", timeout=10)
             if response.status_code == 200:
-                patients = response.json()
+                data = response.json()
                 
-                if patients and "entry" in patients:
-                    st.success(f"Found {len(patients['entry'])} patients")
+                if data and "patients" in data and data["patients"]:
+                    patients_list = data["patients"]
+                    st.success(f"Found {len(patients_list)} patients")
                     
                     # Create a summary table
                     patient_data = []
-                    for entry in patients["entry"]:
-                        patient = entry["resource"]
+                    for patient in patients_list:
+                        # Handle different possible data structures
+                        patient_id = patient.get("id") or patient.get("_id", "N/A")
+                        
+                        # Extract name - handle various formats
+                        name = "N/A"
+                        if patient.get("name"):
+                            if isinstance(patient["name"], list) and len(patient["name"]) > 0:
+                                name_obj = patient["name"][0]
+                                given = name_obj.get("given", [])
+                                family = name_obj.get("family", "")
+                                if given and family:
+                                    name = f"{given[0] if isinstance(given, list) else given} {family}"
+                                elif family:
+                                    name = family
+                                elif given:
+                                    name = given[0] if isinstance(given, list) else given
+                            elif isinstance(patient["name"], str):
+                                name = patient["name"]
+                        
+                        # Handle gender
+                        gender = patient.get("gender", "N/A")
+                        
+                        # Handle birth date
+                        birth_date = patient.get("birthDate") or patient.get("birth_date", "N/A")
+                        
                         patient_data.append({
-                            "ID": patient.get("id", "N/A"),
-                            "Name": " ".join([
-                                name.get("given", [""])[0] if name.get("given") else "",
-                                name.get("family", "") if name.get("family") else ""
-                            ]).strip() if patient.get("name") else "N/A",
-                            "Gender": patient.get("gender", "N/A"),
-                            "Birth Date": patient.get("birthDate", "N/A")
+                            "ID": patient_id,
+                            "Name": name,
+                            "Gender": gender,
+                            "Birth Date": birth_date
                         })
                     
                     df = pd.DataFrame(patient_data)
                     st.dataframe(df, use_container_width=True)
-                else:
+                    
+                    # Show raw data for debugging if enabled
+                    if st.sidebar.checkbox("Show Raw Patient Data", key="show_raw_patients"):
+                        with st.expander("Raw Response Data"):
+                            st.json(data)
+                            
+                elif data and "patients" in data:
                     st.info("No patients found. Generate some synthetic data first!")
+                else:
+                    st.warning("Unexpected response format from server")
+                    with st.expander("Raw Response"):
+                        st.json(data)
             else:
                 st.error(f"Failed to fetch patients: {response.text}")
         except Exception as e:
             st.error(f"Error fetching patients: {str(e)}")
+            # Add debug info if enabled
+            if st.sidebar.checkbox("Show Debug Info", key="debug_patients"):
+                st.exception(e)
 
 def show_model_marketplace():
     """Model marketplace and testing interface"""
-    st.header("🤖 AI Model Marketplace")
-    st.markdown("Explore, test, and compare available AI models")
+    st.header("Models")
+    st.markdown("Explore and test available models")
     
     # Fetch available models
     try:
@@ -328,7 +348,7 @@ def show_model_marketplace():
                     with st.container():
                         st.markdown(f"""
                         <div class="model-card">
-                            <h3>🤖 {model.get('title', 'Unknown Model')}</h3>
+                            <h3>{model.get('title', 'Unknown Model')}</h3>
                             <p><strong>Image:</strong> {model.get('image', 'N/A')}</p>
                             <p><strong>Description:</strong> {model.get('short_description', 'No description available')}</p>
                             <p><strong>Authors:</strong> {model.get('authors', 'Unknown')}</p>
@@ -336,7 +356,7 @@ def show_model_marketplace():
                         """, unsafe_allow_html=True)
                         
                         # Model testing section
-                        with st.expander(f"🧪 Test {model.get('title', 'Model')}"):
+                        with st.expander(f"Test {model.get('title', 'Model')}"):
                             if model.get("examples"):
                                 st.subheader("Example Inputs")
                                 
@@ -397,7 +417,7 @@ def show_model_marketplace():
                                                 
                                                 st.markdown("""
                                                 <div class="prediction-result">
-                                                    <h4>🎯 Prediction Results</h4>
+                                                    <h4>Prediction Results</h4>
                                                 </div>
                                                 """, unsafe_allow_html=True)
                                                 
