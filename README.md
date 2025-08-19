@@ -79,8 +79,8 @@ The `build_all.sh` script builds both the application images and the built-in ML
 
 **Access Points:**
 - API Documentation: http://localhost:8000/docs
-- Streamlit UI (in development): http://localhost:8502
-- Vue UI (in development): http://localhost:8005
+- Streamlit UI (in early development): http://localhost:8502
+- Vue UI (in early development): http://localhost:8005
 
 All built-in models (IrisModel, CoxCOPDModel, DPCGANSModel) will be automatically available.
 
