@@ -264,62 +264,90 @@ def show_synthetic_data_lab():
     
     if st.button("List Patients"):
         try:
-            response = requests.get(f"{API_BASE}/stats/patients?_count=10", timeout=10)
+            response = requests.get(f"{API_BASE}/synthetic/synthea/list-all-patients", timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 
-                if data and "patients" in data and data["patients"]:
+                if data and "patients" in data and len(data["patients"]) > 0:
                     patients_list = data["patients"]
                     st.success(f"Found {len(patients_list)} patients")
                     
                     # Create a summary table
                     patient_data = []
+                    all_cohorts = []
+                    
                     for patient in patients_list:
-                        # Handle different possible data structures
-                        patient_id = patient.get("id") or patient.get("_id", "N/A")
+                        patient_id = patient.get("id", "N/A")
+                        gender = patient.get("gender", "N/A").title()
+                        ethnicity = patient.get("ethnicity", "N/A")
+                        birth_date = patient.get("birth_date", "N/A")
                         
-                        # Extract name - handle various formats
-                        name = "N/A"
-                        if patient.get("name"):
-                            if isinstance(patient["name"], list) and len(patient["name"]) > 0:
-                                name_obj = patient["name"][0]
-                                given = name_obj.get("given", [])
-                                family = name_obj.get("family", "")
-                                if given and family:
-                                    name = f"{given[0] if isinstance(given, list) else given} {family}"
-                                elif family:
-                                    name = family
-                                elif given:
-                                    name = given[0] if isinstance(given, list) else given
-                            elif isinstance(patient["name"], str):
-                                name = patient["name"]
+                        # Handle cohort_ids (it's a list)
+                        cohort_ids = patient.get("cohort_ids", [])
+                        cohort_display = ", ".join(cohort_ids) if cohort_ids else "N/A"
+                        all_cohorts.extend(cohort_ids)
                         
-                        # Handle gender
-                        gender = patient.get("gender", "N/A")
-                        
-                        # Handle birth date
-                        birth_date = patient.get("birthDate") or patient.get("birth_date", "N/A")
+                        # Calculate age if birth_date is available
+                        age = "N/A"
+                        if birth_date != "N/A":
+                            try:
+                                from datetime import datetime
+                                birth_dt = datetime.strptime(birth_date, "%Y-%m-%d")
+                                today = datetime.now()
+                                age = today.year - birth_dt.year - ((today.month, today.day) < (birth_dt.month, birth_dt.day))
+                            except:
+                                age = "N/A"
                         
                         patient_data.append({
                             "ID": patient_id,
-                            "Name": name,
                             "Gender": gender,
-                            "Birth Date": birth_date
+                            "Age": age,
+                            "Birth Date": birth_date,
+                            "Ethnicity": ethnicity,
+                            "Cohorts": cohort_display
                         })
                     
+                    # Display the table
                     df = pd.DataFrame(patient_data)
                     st.dataframe(df, use_container_width=True)
                     
+                    # Show statistics
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        st.metric("Total Patients", len(patients_list))
+                    
+                    with col2:
+                        gender_counts = df["Gender"].value_counts()
+                        if len(gender_counts) > 0:
+                            most_common_gender = gender_counts.index[0]
+                            st.metric("Most Common Gender", f"{most_common_gender} ({gender_counts[most_common_gender]})")
+                    
+                    with col3:
+                        unique_cohorts = len(set(all_cohorts))
+                        st.metric("Number of Cohorts", unique_cohorts)
+                    
+                    # Show cohort distribution
+                    if all_cohorts:
+                        st.subheader("📊 Cohort Distribution")
+                        cohort_counts = pd.Series(all_cohorts).value_counts()
+                        st.bar_chart(cohort_counts)
+                    
+                    # Show gender distribution
+                    st.subheader("👥 Gender Distribution")
+                    gender_counts = df["Gender"].value_counts()
+                    st.bar_chart(gender_counts)
+                    
                     # Show raw data for debugging if enabled
                     if st.sidebar.checkbox("Show Raw Patient Data", key="show_raw_patients"):
-                        with st.expander("Raw Response Data"):
+                        with st.expander("🔍 Raw Response Data"):
                             st.json(data)
                             
                 elif data and "patients" in data:
                     st.info("No patients found. Generate some synthetic data first!")
                 else:
                     st.warning("Unexpected response format from server")
-                    with st.expander("Raw Response"):
+                    with st.expander("🔍 Raw Response"):
                         st.json(data)
             else:
                 st.error(f"Failed to fetch patients: {response.text}")
