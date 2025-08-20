@@ -39,6 +39,8 @@ CHARMTwinsight is designed as a microservices architecture managed with `docker 
 
 *Note: this architecture represents implemented data flows; future features may connect HAPI FHIR to the model server, etc.*
 
+**`streamlit_ui`**: Externally-facing user interface providing access to backend services via the router. Built with Streamlit for rapid prototyping in Python.
+
 **`router`**: Externally-facing REST API providing access to backend services. Built with FastAPI for flexibility.
 
 **`hapi`**: HAPI FHIR server for efficient and flexible storage and querying of FHIR data.
