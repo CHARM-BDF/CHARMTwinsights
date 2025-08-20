@@ -63,10 +63,10 @@ async def get_synthetic_patients(
         # Dynamic timeout based on patient count and years
         # Base timeout: 30s minimum
         # Add 0.5s per patient per year, capped at 1800s (30 minutes)
-        base_timeout = 30.0
-        per_patient_per_year = 0.5  # 0.5 seconds per patient per year
+        base_timeout = 60.0
+        per_patient_per_year = 2.0  # 0.5 seconds per patient per year
         calculated_timeout = base_timeout + (num_patients * num_years * per_patient_per_year)
-        timeout = min(1800.0, calculated_timeout)
+        timeout = min(3600.0, calculated_timeout)
         
         logger.info(f"Generating {num_patients} patients with timeout of {timeout:.1f} seconds")
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -199,7 +199,7 @@ async def count_patient_keys(cohort_id: str = None):
         raise HTTPException(status_code=500, detail="Synthea server unreachable or operation timed out")
 
 
-@router.delete("/cohort/{cohort_id}", response_class=JSONResponse)
+@router.delete("/delete-cohort/{cohort_id}", response_class=JSONResponse)
 async def delete_cohort(cohort_id: str):
     """
     Delete a cohort from the HAPI FHIR server.
@@ -257,10 +257,10 @@ async def generate_download_synthetic_patients(
         # Dynamic timeout based on patient count and years
         # Base timeout: 30s minimum
         # Add 0.5s per patient per year, capped at 1800s (30 minutes)
-        base_timeout = 30.0
-        per_patient_per_year = 0.5  # 0.5 seconds per patient per year
+        base_timeout = 60.0
+        per_patient_per_year = 2.0  # 0.5 seconds per patient per year
         calculated_timeout = base_timeout + (num_patients * num_years * per_patient_per_year)
-        timeout = min(1800.0, calculated_timeout)
+        timeout = min(3600.0, calculated_timeout)
         
         logger.info(f"Generating {num_patients} patients with timeout of {timeout:.1f} seconds")
         async with httpx.AsyncClient(timeout=timeout) as client:

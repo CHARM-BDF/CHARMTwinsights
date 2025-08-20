@@ -5,11 +5,15 @@ import os
 import subprocess
 import tempfile
 import shutil
-
-import tempfile, shutil, os, subprocess, json, glob, requests
+import json
+import glob
+import requests
 from pydantic import BaseModel
+import logging
 
-
+# Create a logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -46,8 +50,15 @@ def run_synthea(num_patients, num_years, min_age=0, max_age=140, gender="both", 
         Exception: If the output directory is not found."""
     
     temp_dir = tempfile.mkdtemp()
+    # Calculate memory allocation based on patient count
+    # Minimum 1GB, add 256MB per 100 patients, cap at 4GB
+    memory_mb = min(4096, 1024 + (num_patients // 100) * 256)
+    
     cmd = [
-        "java", "-jar", "synthea-with-dependencies.jar",
+        "java", 
+        f"-Xmx{memory_mb}m",  # Maximum heap size
+        f"-Xms{memory_mb//2}m",  # Initial heap size (half of max)
+        "-jar", "synthea-with-dependencies.jar",
         "-d", "modules",
         "--exporter.baseDirectory", temp_dir,
         "-p", str(num_patients),
@@ -309,11 +320,29 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
     try:
         # Add timeout for large bundles - calculate based on bundle size
         bundle_size = len(json.dumps(bundle))
-        # 1 second per 10KB with a minimum of 10 seconds and maximum of 120 seconds
-        timeout = max(10, min(120, bundle_size / 10000))
-        print(f"Posting bundle {os.path.basename(json_file)} (size: {bundle_size/1024:.1f}KB) with timeout {timeout:.1f}s")
+        # 2 seconds per 10KB with a minimum of 15 seconds and maximum of 180 seconds
+        timeout = max(15, min(180, bundle_size / 5000))
+        logger.info(f"Posting bundle {os.path.basename(json_file)} (size: {bundle_size/1024:.1f}KB) with timeout {timeout:.1f}s")
         
-        r = requests.post(
+        # Use session for connection pooling and performance
+        session = requests.Session()
+        
+        # Add retry mechanism with exponential backoff
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        retry_strategy = Retry(
+            total=3,  # Maximum number of retries
+            backoff_factor=1,  # Exponential backoff
+            status_forcelist=[429, 500, 502, 503, 504],  # Retry on these status codes
+            allowed_methods=["POST"]  # Only retry POST requests
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        r = session.post(
             url, 
             json=bundle, 
             headers={"Content-Type": "application/fhir+json"}, 
@@ -539,22 +568,42 @@ async def push_patients(request: SyntheaRequest):
         print(f"Processing {total_files} patient files")
         
         # Process files in batches to avoid overwhelming the server
-        batch_size = 10  # Process 10 files at a time
+        # Adjust batch size based on number of patients - smaller batches for larger cohorts
+        batch_size = max(5, min(20, 100 // (total_files // 10 + 1)))  # Dynamic batch sizing
+        
+        # Add retry logic for failed uploads
+        max_retries = 3
+        retry_delay = 5  # seconds
+        
         for i in range(0, total_files, batch_size):
             batch = patient_files[i:i+batch_size]
             print(f"Processing batch {i//batch_size + 1}/{(total_files + batch_size - 1)//batch_size} ({len(batch)} files)")
             
             for json_file in batch:
-                success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tagset)
-                if new_patient_ids:
-                    patient_ids.update(new_patient_ids)
-                results.append({"file": os.path.basename(json_file), "success": success, "msg": error_info})
+                # Try up to max_retries times
+                for retry in range(max_retries):
+                    try:
+                        success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tagset)
+                        if new_patient_ids:
+                            patient_ids.update(new_patient_ids)
+                        results.append({"file": os.path.basename(json_file), "success": success, "msg": error_info})
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        if retry < max_retries - 1:
+                            logger.warning(f"Retry {retry+1}/{max_retries} for {os.path.basename(json_file)}: {str(e)}")
+                            import time
+                            time.sleep(retry_delay)
+                        else:
+                            # Last retry failed
+                            logger.error(f"Failed to upload {os.path.basename(json_file)} after {max_retries} attempts: {str(e)}")
+                            results.append({"file": os.path.basename(json_file), "success": False, "msg": f"Failed after {max_retries} attempts: {str(e)}"})
             
-            # Small delay between batches to give the server a chance to catch up
+            # Adaptive delay between batches based on batch size
             if i + batch_size < total_files:
-                print("Pausing briefly between batches...")
                 import time
-                time.sleep(2)
+                delay = min(5, max(1, batch_size / 5))  # 1-5 seconds based on batch size
+                print(f"Pausing for {delay:.1f} seconds between batches...")
+                time.sleep(delay)
 
 
         try:
@@ -1332,7 +1381,7 @@ async def count_patient_keys(cohort_id: str = None):
 
 @app.delete("/delete-cohort/{cohort_id}", response_class=JSONResponse)
 async def delete_cohort(cohort_id: str):
-    """ Deletes a cohort from the HAPI FHIR server.
+    """ Deletes a cohort from the HAPI FHIR server, including all patients with the cohort's tag.
     Args:
         cohort_id: The ID of the cohort to delete.
     Returns:
@@ -1352,10 +1401,60 @@ async def delete_cohort(cohort_id: str):
     if not group:
         return JSONResponse(status_code=404, content={"error": f"Cohort with ID '{cohort_id}' not found."})
     
-    # Count the number of patients in the group
-    patient_count = 0
+    # Get patients from the group's member list
+    group_patient_ids = []
     if "member" in group:
-        patient_count = len(group["member"])
+        group_patient_ids = [member.get("entity", {}).get("reference", "").replace("Patient/", "") 
+                           for member in group["member"] if "entity" in member]
+        group_patient_ids = set([pid for pid in group_patient_ids if pid])  # Remove empty IDs
+    
+    # Find all patients with this cohort tag
+    tag_patient_ids = []
+    try:
+        # For FHIR search, we need to use the system|code format
+        cohort_tag = f"urn:charm:cohort|{cohort_id}"
+        
+        # Get all patients with this cohort tag
+        url = f"{hapi_url}/Patient?_tag={cohort_tag}&_count=5000"
+        r = requests.get(url)
+        r.raise_for_status()
+        
+        # Extract patient IDs from the search results
+        tagged_patients = r.json()
+        if "entry" in tagged_patients:
+            for entry in tagged_patients["entry"]:
+                if "resource" in entry and entry["resource"].get("resourceType") == "Patient":
+                    patient_id = entry["resource"].get("id")
+                    if patient_id and patient_id not in tag_patient_ids:
+                        tag_patient_ids.append(patient_id)
+    except Exception as e:
+        logger.error(f"Error finding patients with cohort tag: {str(e)}")
+    
+    # Use only the tag-based patient IDs for deletion, as they're more reliable
+    # The Group resource might contain references to patients that no longer exist
+    # or that don't actually have the cohort tag
+    patient_ids = tag_patient_ids
+    
+    # Log the counts for debugging
+    logger.info(f"Cohort {cohort_id}: {len(group_patient_ids)} patients in group, {len(tag_patient_ids)} patients with tag")
+    
+    # Delete each patient
+    deleted_count = 0
+    failed_count = 0
+    try:
+        for patient_id in patient_ids:
+            try:
+                delete_url = f"{hapi_url}/Patient/{patient_id}"
+                delete_r = requests.delete(delete_url)
+                delete_r.raise_for_status()
+                deleted_count += 1
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Failed to delete patient {patient_id}: {str(e)}")
+    
+    except Exception as e:
+        logger.error(f"Error deleting patients: {str(e)}")
+        # Continue to delete the group even if patient deletion had issues
     
     # Delete the Group resource
     url = f"{hapi_url.rstrip('/')}/Group/{cohort_id}"
@@ -1363,12 +1462,14 @@ async def delete_cohort(cohort_id: str):
         r = requests.delete(url)
         r.raise_for_status()
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Error deleting cohort: {str(e)}"})
+        return JSONResponse(status_code=500, content={"error": f"Error deleting cohort group: {str(e)}"})
     
     return {
-        "message": f"Successfully deleted cohort '{cohort_id}' with {patient_count} patients.",
+        "message": f"Successfully deleted cohort '{cohort_id}' with {len(patient_ids)} patients ({deleted_count} deleted, {failed_count} failed).",
         "cohort_id": cohort_id,
-        "patients_deleted": patient_count
+        "patients_deleted": deleted_count,
+        "patients_failed": failed_count,
+        "total_patients": len(patient_ids)
     }
 
 @app.post("/generate-download-synthetic-patients", response_class=JSONResponse)
