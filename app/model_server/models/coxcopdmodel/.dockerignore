@@ -1,0 +1,22 @@
+# Exclude files that don't affect the Docker build
+*.log
+*.tmp
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Exclude git files if any
+.git/
+.gitignore
+
+# Exclude IDE files
+.vscode/
+.idea/
+*.sublime-*
