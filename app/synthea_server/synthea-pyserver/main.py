@@ -8,14 +8,139 @@ import shutil
 import json
 import glob
 import requests
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Dict, List, Set
+import re
 import logging
+import uuid
+import asyncio
+from datetime import datetime
+import random
+import csv
+import threading
 
 # Create a logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+# In-memory job storage with thread safety
+jobs: Dict[str, 'JobStatus'] = {}
+jobs_lock = threading.Lock()
+
+# Demographics data cache
+demographics_data = None
+
+class JobStatus:
+    def __init__(self, job_id: str, request_data: dict):
+        self.id = job_id
+        self.status = "queued"  # queued, running, completed, failed, cancelled
+        self.request_data = request_data
+        self.progress = 0.0
+        self.created_at = datetime.now()
+        self.started_at = None
+        self.completed_at = None
+        self.result = None
+        self.error = None
+        self.current_phase = "queued"
+        self.total_chunks = 0
+        self.completed_chunks = 0
+        self.estimated_remaining_seconds = None
+
+    def to_dict(self):
+        return {
+            "job_id": self.id,
+            "status": self.status,
+            "progress": self.progress,
+            "current_phase": self.current_phase,
+            "created_at": self.created_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "total_chunks": self.total_chunks,
+            "completed_chunks": self.completed_chunks,
+            "estimated_remaining_seconds": self.estimated_remaining_seconds,
+            "result": self.result if self.status == "completed" else None,
+            "error": self.error if self.status == "failed" else None
+        }
+
+def load_demographics_data():
+    """Load and cache demographics data for state/city validation and sampling"""
+    global demographics_data
+    if demographics_data is None:
+        demographics_data = {"cities": {}, "states": {}, "state_populations": {}}
+        
+        demographics_file = "data/demographics.csv"
+        with open(demographics_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                city = row['NAME']
+                state = row['STNAME']
+                population = int(row.get('POPESTIMATE2015', 0))
+                
+                # Store city-state combinations
+                if state not in demographics_data["cities"]:
+                    demographics_data["cities"][state] = set()
+                demographics_data["cities"][state].add(city)
+                
+                # Store states
+                demographics_data["states"][state] = True
+                
+                # Accumulate state populations
+                if state not in demographics_data["state_populations"]:
+                    demographics_data["state_populations"][state] = 0
+                demographics_data["state_populations"][state] += population
+        
+        # Convert sets to lists for JSON serialization
+        for state in demographics_data["cities"]:
+            demographics_data["cities"][state] = list(demographics_data["cities"][state])
+            
+        logger.info(f"Loaded demographics data: {len(demographics_data['states'])} states, "
+                   f"{sum(len(cities) for cities in demographics_data['cities'].values())} cities")
+    
+    return demographics_data
+
+def validate_state_city(state: Optional[str], city: Optional[str]) -> tuple[bool, str]:
+    """Validate state and city combinations"""
+    demo_data = load_demographics_data()
+    
+    if state and state not in demo_data["states"]:
+        return False, f"Invalid state: {state}. Available states: {', '.join(sorted(demo_data['states'].keys()))}"
+    
+    if city and state:
+        if city not in demo_data["cities"].get(state, []):
+            available_cities = demo_data["cities"].get(state, [])
+            return False, f"Invalid city '{city}' for state '{state}'. Available cities: {', '.join(sorted(available_cities[:10]))}{'...' if len(available_cities) > 10 else ''}"
+    
+    if city and not state:
+        return False, "City specified without state. Please specify both state and city."
+    
+    return True, ""
+
+def sample_states_by_population(num_patients: int) -> Dict[str, int]:
+    """Sample states for patients based on population weights"""
+    demo_data = load_demographics_data()
+    state_populations = demo_data["state_populations"]
+    
+    if not state_populations:
+        # Fallback to Massachusetts if no data
+        return {"Massachusetts": num_patients}
+    
+    # Calculate weights
+    total_pop = sum(state_populations.values())
+    weights = {state: pop/total_pop for state, pop in state_populations.items()}
+    
+    # Sample patients to states
+    state_counts = {}
+    states = list(weights.keys())
+    state_weights = list(weights.values())
+    
+    for _ in range(num_patients):
+        state = random.choices(states, weights=state_weights)[0]
+        state_counts[state] = state_counts.get(state, 0) + 1
+    
+    return state_counts
+
 
 # redirect / to the api docs
 @app.get("/")
@@ -24,16 +149,9 @@ def redirect_to_docs():
     return JSONResponse(status_code=307, content={"message": "Redirecting to /docs for API documentation."}, headers={"Location": "/docs"})
 
 
-def run_synthea(num_patients, num_years, min_age=0, max_age=140, gender="both", exporter="fhir"):
-    # Debug the incoming parameters
-    print(f"\n==== RUN_SYNTHEA PARAMETERS ====")
-    print(f"num_patients: {num_patients}, type: {type(num_patients)}")
-    print(f"num_years: {num_years}, type: {type(num_years)}")
-    print(f"min_age: {min_age}, type: {type(min_age)}")
-    print(f"max_age: {max_age}, type: {type(max_age)}")
-    print(f"gender: {gender}, type: {type(gender)}")
-    print(f"exporter: {exporter}, type: {type(exporter)}")
-    print(f"==== END RUN_SYNTHEA PARAMETERS ====\n")
+async def run_synthea(num_patients, num_years, min_age=0, max_age=140, gender="both", exporter="fhir", state=None, city=None):
+    logger.debug(f"Running Synthea with parameters: patients={num_patients}, years={num_years}, "
+                f"age={min_age}-{max_age}, gender={gender}, exporter={exporter}, state={state}, city={city}")
     """ Runs Synthea to generate synthetic patient data.
     Args:
         num_patients: Number of synthetic patients to generate.
@@ -42,6 +160,8 @@ def run_synthea(num_patients, num_years, min_age=0, max_age=140, gender="both", 
         max_age: Maximum age of generated patients (default: 140).
         gender: Gender of generated patients ("both", "male", or "female", default: "both").
         exporter: Export format, either 'csv' or 'fhir' (default: 'fhir').
+        state: US state for patient generation (optional).
+        city: US city for patient generation (optional, requires state).
     Returns:
         A tuple (temp_dir, output_dir) where:
         - temp_dir: Temporary directory where Synthea output is stored.
@@ -87,23 +207,51 @@ def run_synthea(num_patients, num_years, min_age=0, max_age=140, gender="both", 
     gender_arg = None
     if gender_norm in ["m", "male"]:
         gender_arg = "M"
-        print(f"Setting gender to Male (M) from input: {gender}")
+        logger.debug(f"Setting gender to Male (M) from input: {gender}")
     elif gender_norm in ["f", "female"]:
         gender_arg = "F"
-        print(f"Setting gender to Female (F) from input: {gender}")
+        logger.debug(f"Setting gender to Female (F) from input: {gender}")
     else:
-        print(f"Using default gender distribution (both) from input: {gender}")
+        logger.debug(f"Using default gender distribution (both) from input: {gender}")
     
     # Only add -g if gender is not 'both'
     if gender_arg:
         cmd.extend(["-g", gender_arg])
-        print(f"Added gender flag: -g {gender_arg}")
+        logger.debug(f"Added gender flag: -g {gender_arg}")
     
-    print(f"Full Synthea command: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    # Handle state and city parameters (these are positional arguments, not flags)
+    if state:
+        cmd.append(state)
+        logger.debug(f"Added state as positional argument: {state}")
+        
+        # Handle city parameter (only if state is also specified)
+        if city:
+            cmd.append(city)
+            logger.debug(f"Added city as positional argument: {city}")
+    
+    logger.debug(f"Full Synthea command: {' '.join(cmd)}")
+    
+    # Use async subprocess to avoid blocking the event loop
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    
+    stdout, stderr = await process.communicate()
+    
+    if process.returncode != 0:
+        error_msg = f"Synthea process failed with return code {process.returncode}"
+        if stderr:
+            error_msg += f": {stderr.decode()}"
+        raise subprocess.CalledProcessError(process.returncode, cmd, stderr)
+    
     # Determine the output directory based on the exporter
     output_dir = os.path.join(temp_dir, exporter)
     if not os.path.isdir(output_dir):
+        # Try to find what directory was actually created
+        possible_dirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d))]
+        logger.error(f"Expected directory '{exporter}' not found. Available directories: {possible_dirs}")
         raise Exception(f"{exporter.upper()} output directory not found!")
     return temp_dir, output_dir
 
@@ -163,22 +311,22 @@ def fetch_group_by_id(hapi_url, group_id):
         The Group resource as a dictionary if found, None otherwise.
     """
     url = f"{hapi_url.rstrip('/')}/Group/{group_id}"
-    print(f"Fetching group from URL: {url}")
+    logger.debug(f"Fetching group from URL: {url}")
     try:
         r = requests.get(url)
-        print(f"Group fetch response status: {r.status_code}")
+        logger.debug(f"Group fetch response status: {r.status_code}")
         if r.status_code == 200:
             group_data = r.json()
-            print(f"Group data retrieved: ID={group_data.get('id')}, Type={group_data.get('resourceType')}")
+            logger.debug(f"Group data retrieved: ID={group_data.get('id')}, Type={group_data.get('resourceType')}")
             if 'member' in group_data:
-                print(f"Group has {len(group_data['member'])} members")
+                logger.debug(f"Group has {len(group_data['member'])} members")
             else:
-                print("Group has no members")
+                logger.debug("Group has no members")
             return group_data
-        print(f"Failed to fetch group: Status {r.status_code}")
+        logger.warning(f"Failed to fetch group: Status {r.status_code}")
         return None
     except Exception as e:
-        print(f"Error fetching group {group_id}: {e}")
+        logger.error(f"Error fetching group {group_id}: {e}")
         return None
 
 
@@ -358,7 +506,7 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
             "timeout_seconds": round(timeout, 1),
             "message": f"Timeout posting bundle to HAPI server after {timeout} seconds"
         }
-        print(f"Timeout error: {error_info['message']}")
+        logger.error(f"Timeout error: {error_info['message']}")
         return False, error_info, None
     except requests.HTTPError as e:
         error_body = r.text if 'r' in locals() else "No response body"
@@ -370,7 +518,7 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
             "message": f"HTTP error {status_code} posting bundle",
             "response_body": error_body[:500] if len(error_body) > 500 else error_body
         }
-        print(f"HTTP error: {error_info['message']}")
+        logger.error(f"HTTP error: {error_info['message']}")
         return False, error_info, None
     except Exception as e:
         error_info = {
@@ -379,7 +527,7 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
             "exception": str(e.__class__.__name__),
             "message": str(e)
         }
-        print(f"General error: {error_info['message']}")
+        logger.error(f"General error: {error_info['message']}")
         return False, error_info, None
     
 
@@ -442,7 +590,7 @@ def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
             "system": "urn:charm:created",
             "code": current_time
         })
-        print(f"Adding creation timestamp {current_time} to new cohort {cohort_id}")
+        logger.info(f"Adding creation timestamp {current_time} to new cohort {cohort_id}")
     if tags:
         apply_tags(group, tags)
     r = requests.put(url, json=group, headers={"Content-Type": "application/fhir+json"})
@@ -451,196 +599,318 @@ def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
 
 
 class SyntheaRequest(BaseModel):
-    num_patients: int = 10
-    num_years: int = 1
-    cohort_id: str = "default"
-    exporter: str = "fhir"
-    min_age: int = 0
-    max_age: int = 140
-    gender: str = "both"
+    num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
+    num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
+    cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
+    exporter: str = Field("fhir", description="Export format: 'fhir' or 'csv'")
+    min_age: int = Field(0, ge=0, le=140, description="Minimum patient age")
+    max_age: int = Field(140, ge=0, le=140, description="Maximum patient age")
+    gender: str = Field("both", description="Gender: 'both', 'male', or 'female'")
+    state: Optional[str] = Field(None, description="US state for patient generation")
+    city: Optional[str] = Field(None, description="US city for patient generation (requires state)")
+    use_population_sampling: bool = Field(True, description="Sample states by population if no state specified")
+    
+    @field_validator('cohort_id')
+    @classmethod
+    def validate_cohort_id(cls, v: str) -> str:
+        """Validate that cohort_id follows FHIR resource ID rules"""
+        # FHIR resource ID pattern: [A-Za-z0-9\-\.]{1,64}
+        fhir_id_pattern = r'^[A-Za-z0-9\-\.]{1,64}$'
+        
+        if not re.match(fhir_id_pattern, v):
+            raise ValueError(
+                f"cohort_id '{v}' is not a valid FHIR resource ID. "
+                f"Must contain only letters, numbers, hyphens, and periods, "
+                f"and be 1-64 characters long. Underscores are not allowed."
+            )
+        return v
 
 @app.post("/synthetic-patients")
-async def push_patients(request: SyntheaRequest):
-    # Debug logging for request parameters
-    print(f"\n==== REQUEST DEBUG INFO ====")
-    print(f"Received request with parameters:")
-    print(f"  - num_patients: {request.num_patients}")
-    print(f"  - num_years: {request.num_years}")
-    print(f"  - cohort_id: {request.cohort_id}")
-    print(f"  - exporter: {request.exporter}")
-    print(f"  - min_age: {request.min_age}")
-    print(f"  - max_age: {request.max_age}")
-    print(f"  - gender: {request.gender}")
-    print(f"==== END DEBUG INFO ====\n")
+async def create_generation_job(request: SyntheaRequest):
+    """Create a new synthetic patient generation job.
     
-    # Also try to get the raw request body
-    from fastapi import Request
-    from fastapi.concurrency import run_in_threadpool
-    import inspect
+    This endpoint creates an asynchronous job for generating synthetic patients.
+    For large cohorts, the generation is automatically chunked for better resource management.
     
-    # Get the raw request
-    request_obj = inspect.currentframe().f_locals.get('request')
-    if isinstance(request_obj, Request):
-        try:
-            body = await request_obj.body()
-            print(f"Raw request body: {body.decode()}")
-        except Exception as e:
-            print(f"Error getting raw body: {e}")
-    else:
-        print("Could not access raw request")
-    """ Pushes synthetic patient data generated by Synthea to a HAPI FHIR server.
-    Args:
-        num_patients: Number of synthetic patients to generate (default: 10).
-        num_years: Number of years of history to generate for each patient (default: 1).
-        cohort_id: Optional ID for the cohort to which these patients belong. If provided, a FHIR Group resource will be created or updated with these patients.
-        exporter: Export format, either 'csv' or 'fhir' (default: 'fhir').
-        min_age: Minimum age of generated patients (default: 0).
-        max_age: Maximum age of generated patients (default: 140).
-        gender: Gender of generated patients ('both', 'male', or 'female', default: 'both').
-    Returns:
-        A summary of the operation including successful and failed bundles, patient IDs, and tags applied.
+    Returns a job_id that can be used to check status and retrieve results.
     """
-    if request.num_patients <= 0:
-        return JSONResponse(status_code=400, content={"error": "num_patients must be a positive integer."})
-    if request.num_years <= 0:
-        return JSONResponse(status_code=400, content={"error": "num_years must be a positive integer."})
-
-    hapi_url = "http://hapi:8080/fhir"
-    # we need to check if the hapi server is running by checking fhir/$meta, return an error if result is not 200; no retries
-    try:
-        r = requests.get(hapi_url + "/$meta")
-        r.raise_for_status()
-    except Exception as e:
-        # we'll return a 500 error with the messag se
-        ret = JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable. (It may be starting up.)"})
-        return ret
-
-    # Check if the exporter is valid
+    
+    # Validate request parameters  
     if request.exporter not in ["csv", "fhir"]:
-        return JSONResponse(status_code=400, content={"error": "Invalid exporter. Must be 'csv' or 'fhir'."})    
+        raise HTTPException(status_code=400, detail="exporter must be 'csv' or 'fhir'")
+    if request.min_age > request.max_age:
+        raise HTTPException(status_code=400, detail="min_age cannot be greater than max_age")
     
-    print(f"\n==== BEFORE CALLING RUN_SYNTHEA ====")
-    print(f"About to call run_synthea with:")
-    print(f"num_patients={request.num_patients}, num_years={request.num_years}")
-    print(f"min_age={request.min_age}, max_age={request.max_age}")
-    print(f"gender={request.gender}, exporter={request.exporter}")
-    print(f"==== END BEFORE CALLING ====\n")
+    # Validate state/city combination
+    is_valid, error_msg = validate_state_city(request.state, request.city)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
     
-    temp_dir, output_dir = run_synthea(
-        request.num_patients, 
-        request.num_years,
-        request.min_age,
-        request.max_age,
-        request.gender,
-        request.exporter
-    )
+    # Create job
+    job_id = str(uuid.uuid4())
+    job = JobStatus(job_id, request.model_dump())
+    with jobs_lock:
+        jobs[job_id] = job
     
-    print("\n==== AFTER CALLING RUN_SYNTHEA ====")
-    print(f"Returned temp_dir: {temp_dir}")
-    print(f"Returned output_dir: {output_dir}")
-    print("==== END AFTER CALLING ====\n")
+    # Start processing in background (truly async, don't wait for completion)
+    asyncio.create_task(process_generation_job(job_id))
+    
+    logger.info(f"Created generation job {job_id} for {request.num_patients} patients")
+    
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "status_url": f"/synthetic-patients/jobs/{job_id}",
+        "created_at": job.created_at.isoformat()
+    }
 
-    tagset = {"urn:charm:cohort": request.cohort_id, "urn:charm:datatype": "synthetic", "urn:charm:source": "synthea"} 
+@app.get("/synthetic-patients/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    """Get the status of a generation job"""
+    with jobs_lock:
+        if job_id not in jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job = jobs[job_id]
+    return job.to_dict()
 
-    # Get current time in ISO format for the creation timestamp
-    import datetime
-    current_time = datetime.datetime.now().isoformat()
+@app.get("/synthetic-patients/jobs")
+async def list_recent_jobs(limit: int = 50):
+    """List recent generation jobs"""
+    # Sort by creation time, newest first
+    with jobs_lock:
+        sorted_jobs = sorted(jobs.values(), key=lambda j: j.created_at, reverse=True)
+    return [job.to_dict() for job in sorted_jobs[:limit]]
+
+@app.delete("/synthetic-patients/jobs/{job_id}")
+async def cancel_job(job_id: str):
+    """Cancel a queued or running job"""
+    with jobs_lock:
+        if job_id not in jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        job = jobs[job_id]
+        if job.status in ["completed", "failed", "cancelled"]:
+            raise HTTPException(status_code=400, detail=f"Cannot cancel job with status: {job.status}")
+        
+        job.status = "cancelled"
+        job.completed_at = datetime.now()
+        job.current_phase = "cancelled by user"
     
-    # Add creation timestamp to tagset
-    tagset["urn:charm:created"] = current_time
+    return {"message": f"Job {job_id} cancelled", "status": "cancelled"}
+
+@app.get("/demographics/states")
+async def get_available_states():
+    """Get list of available states for patient generation"""
+    demo_data = load_demographics_data()
+    states = sorted(demo_data["states"].keys())
+    return {"states": states, "count": len(states)}
+
+@app.get("/demographics/cities/{state}")
+async def get_cities_for_state(state: str):
+    """Get list of available cities for a given state"""
+    demo_data = load_demographics_data()
+    
+    if state not in demo_data["states"]:
+        raise HTTPException(status_code=404, detail=f"State '{state}' not found")
+    
+    cities = sorted(demo_data["cities"].get(state, []))
+    return {"state": state, "cities": cities, "count": len(cities)}
+
+
+async def process_generation_job(job_id: str):
+    """Background task to process a generation job with chunking"""
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        logger.error(f"Job {job_id} not found")
+        return
     
     try:
-        # 1. Practitioner and hospital info first
-        special_files = sorted(glob.glob(os.path.join(output_dir, "practitionerInformation*.json"))) + \
-                        sorted(glob.glob(os.path.join(output_dir, "hospitalInformation*.json")))
-        all_files = sorted(glob.glob(os.path.join(output_dir, "*.json")))
-        patient_files = [f for f in all_files if f not in special_files]
-
-        results = []
-        # First special files
-        for json_file in special_files:
-            success, error_info, _ = post_bundle(json_file, hapi_url, tags=tagset)
-            results.append({"file": os.path.basename(json_file), "success": success, "msg": error_info})
-
-        # Then patient bundles - process in batches for better error handling
-        patient_ids = set()
-        total_files = len(patient_files)
-        print(f"Processing {total_files} patient files")
+        job.status = "running"
+        job.started_at = datetime.now()
         
-        # Process files in batches to avoid overwhelming the server
-        # Adjust batch size based on number of patients - smaller batches for larger cohorts
-        batch_size = max(5, min(20, 100 // (total_files // 10 + 1)))  # Dynamic batch sizing
+        request_data = job.request_data
         
-        # Add retry logic for failed uploads
-        max_retries = 3
-        retry_delay = 5  # seconds
-        
-        for i in range(0, total_files, batch_size):
-            batch = patient_files[i:i+batch_size]
-            print(f"Processing batch {i//batch_size + 1}/{(total_files + batch_size - 1)//batch_size} ({len(batch)} files)")
-            
-            for json_file in batch:
-                # Try up to max_retries times
-                for retry in range(max_retries):
-                    try:
-                        success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tagset)
-                        if new_patient_ids:
-                            patient_ids.update(new_patient_ids)
-                        results.append({"file": os.path.basename(json_file), "success": success, "msg": error_info})
-                        break  # Success, exit retry loop
-                    except Exception as e:
-                        if retry < max_retries - 1:
-                            logger.warning(f"Retry {retry+1}/{max_retries} for {os.path.basename(json_file)}: {str(e)}")
-                            import time
-                            time.sleep(retry_delay)
-                        else:
-                            # Last retry failed
-                            logger.error(f"Failed to upload {os.path.basename(json_file)} after {max_retries} attempts: {str(e)}")
-                            results.append({"file": os.path.basename(json_file), "success": False, "msg": f"Failed after {max_retries} attempts: {str(e)}"})
-            
-            # Adaptive delay between batches based on batch size
-            if i + batch_size < total_files:
-                import time
-                delay = min(5, max(1, batch_size / 5))  # 1-5 seconds based on batch size
-                print(f"Pausing for {delay:.1f} seconds between batches...")
-                time.sleep(delay)
-
-
+        # Check HAPI server availability
+        hapi_url = "http://hapi:8080/fhir"
         try:
-            msg = upsert_group(hapi_url, request.cohort_id, patient_ids, tagset)
-            results.append({"file": f"group_{request.cohort_id}", "success": True, "msg": msg})
+            r = requests.get(hapi_url + "/$meta", timeout=10)
+            r.raise_for_status()
         except Exception as e:
-            results.append({"file": f"group_{request.cohort_id}", "success": False, "msg": str(e)})
-
-        # Collect detailed information about failed bundles
-        failed_bundles = [r for r in results if not r["success"]]
-        failure_details = []
+            job.status = "failed"
+            job.error = f"HAPI FHIR server is not reachable: {str(e)}"
+            job.completed_at = datetime.now()
+            return
         
-        for failed in failed_bundles:
-            # Extract the error details
-            error_info = failed.get("msg", {})
-            if isinstance(error_info, dict):
-                failure_details.append(error_info)
-            else:
-                # Handle legacy string error messages
-                failure_details.append({
-                    "file_name": failed.get("file", "unknown"),
-                    "error_type": "unknown",
-                    "message": str(error_info)
+        # Determine state distribution
+        total_patients = request_data["num_patients"]
+        
+        if request_data.get("state"):
+            # Specific state requested
+            state_distribution = {request_data["state"]: total_patients}
+            job.current_phase = f"Generating {total_patients} patients in {request_data['state']}"
+        elif request_data.get("use_population_sampling", True):
+            # Sample by population
+            state_distribution = sample_states_by_population(total_patients)
+            job.current_phase = f"Generating patients across {len(state_distribution)} states"
+        else:
+            # Default to Massachusetts
+            state_distribution = {"Massachusetts": total_patients}
+            job.current_phase = f"Generating {total_patients} patients in Massachusetts"
+        
+        # Use fixed chunk size of 100 patients
+        chunk_size = 100
+        
+        # Create chunks across states
+        chunks = []
+        chunk_id = 1
+        
+        for state, state_patients in state_distribution.items():
+            remaining_patients = state_patients
+            while remaining_patients > 0:
+                chunk_patients = min(chunk_size, remaining_patients)
+                chunks.append({
+                    "chunk_id": chunk_id,
+                    "state": state,
+                    "city": request_data.get("city") if len(state_distribution) == 1 else None,
+                    "num_patients": chunk_patients
                 })
+                remaining_patients -= chunk_patients
+                chunk_id += 1
         
-        summary = {
-            "successful_bundles": sum(1 for r in results if r["success"]),
-            "failed_bundles": sum(1 for r in results if not r["success"]), 
-            "patient_ids": list(patient_ids),
-            "num_patients": len(patient_ids),
-            "cohort_id": request.cohort_id,  # Explicitly include the cohort ID in the response
-            "tags_applied": tagset,
-            "failure_details": failure_details if failure_details else None
+        job.total_chunks = len(chunks)
+        job.completed_chunks = 0
+        
+        logger.info(f"Job {job_id}: Processing {total_patients} patients in {len(chunks)} chunks")
+        
+        # Process chunks
+        all_patient_ids = set()
+        tagset = {
+            "urn:charm:cohort": request_data["cohort_id"],
+            "urn:charm:datatype": "synthetic",
+            "urn:charm:source": "synthea",
+            "urn:charm:created": datetime.now().isoformat()
         }
-        return summary
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        for chunk_idx, chunk in enumerate(chunks):
+            if job.status == "cancelled":
+                logger.info(f"Job {job_id} cancelled during chunk {chunk_idx + 1}")
+                return
+            
+            job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Generating {chunk['num_patients']} patients in {chunk['state']}"
+            job.progress = chunk_idx / len(chunks) * 0.9  # Each chunk (including upsert) is 90% of total
+            
+            # Estimate remaining time
+            if chunk_idx > 0:
+                elapsed = (datetime.now() - job.started_at).total_seconds()
+                avg_time_per_chunk = elapsed / chunk_idx
+                remaining_chunks = len(chunks) - chunk_idx
+                job.estimated_remaining_seconds = int(avg_time_per_chunk * remaining_chunks)
+            
+            # Generate chunk
+            temp_dir, output_dir = await run_synthea(
+                num_patients=chunk["num_patients"],
+                num_years=request_data["num_years"],
+                min_age=request_data["min_age"],
+                max_age=request_data["max_age"],
+                gender=request_data["gender"],
+                exporter=request_data["exporter"],
+                state=chunk["state"],
+                city=chunk["city"]
+            )
+            
+            job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Uploading to HAPI"
+            
+            # Upload chunk
+            chunk_patient_ids = await upload_chunk_to_hapi(
+                output_dir, hapi_url, tagset, job_id, chunk["chunk_id"]
+            )
+            all_patient_ids.update(chunk_patient_ids)
+            
+            # Update cohort with current patient set after each chunk
+            job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Updating cohort"
+            try:
+                upsert_group(hapi_url, request_data["cohort_id"], all_patient_ids, tagset)
+                logger.info(f"Job {job_id}: Updated cohort with {len(all_patient_ids)} patients after chunk {chunk['chunk_id']}")
+            except Exception as e:
+                logger.error(f"Job {job_id}: Failed to update cohort after chunk {chunk['chunk_id']}: {str(e)}")
+                # Continue processing - we'll try again with the next chunk
+            
+            job.completed_chunks += 1
+            
+            # Update progress after completing this chunk
+            job.progress = (chunk_idx + 1) / len(chunks) * 0.9
+            
+            # Clean up chunk files immediately
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
+            # Brief pause between chunks
+            await asyncio.sleep(1)
+        
+        # Job completed successfully (cohort was updated after each chunk)
+        job.status = "completed"
+        job.progress = 1.0
+        job.completed_at = datetime.now()
+        job.current_phase = "completed"
+        job.result = {
+            "total_patients": len(all_patient_ids),
+            "patient_ids": list(all_patient_ids),
+            "chunks_processed": len(chunks),
+            "cohort_id": request_data["cohort_id"],
+            "tags_applied": tagset
+        }
+        
+        logger.info(f"Job {job_id} completed successfully: {len(all_patient_ids)} patients generated")
+        
+    except Exception as e:
+        job.status = "failed"
+        job.error = str(e)
+        job.completed_at = datetime.now()
+        job.current_phase = "failed"
+        logger.error(f"Job {job_id} failed: {str(e)}", exc_info=True)
+
+async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_id: str, chunk_id: int) -> Set[str]:
+    """Upload a chunk's generated files to HAPI server"""
+    # Get all JSON files
+    special_files = sorted(glob.glob(os.path.join(output_dir, "practitionerInformation*.json"))) + \
+                    sorted(glob.glob(os.path.join(output_dir, "hospitalInformation*.json")))
+    all_files = sorted(glob.glob(os.path.join(output_dir, "*.json")))
+    patient_files = [f for f in all_files if f not in special_files]
+    
+    patient_ids = set()
+    
+    # Upload special files first (if any)
+    for json_file in special_files:
+        try:
+            success, error_info, _ = post_bundle(json_file, hapi_url, tags=tags)
+            if not success:
+                logger.warning(f"Job {job_id} chunk {chunk_id}: Failed to upload {os.path.basename(json_file)}: {error_info}")
+        except Exception as e:
+            logger.warning(f"Job {job_id} chunk {chunk_id}: Error uploading {os.path.basename(json_file)}: {str(e)}")
+    
+    # Upload patient files with retry logic
+    max_retries = 3
+    retry_delay = 2
+    
+    for json_file in patient_files:
+        for retry in range(max_retries):
+            try:
+                success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tags)
+                if success and new_patient_ids:
+                    patient_ids.update(new_patient_ids)
+                    break  # Success
+                elif not success:
+                    if retry < max_retries - 1:
+                        await asyncio.sleep(retry_delay)
+                    else:
+                        logger.error(f"Job {job_id} chunk {chunk_id}: Failed to upload {os.path.basename(json_file)} after {max_retries} attempts")
+            except Exception as e:
+                if retry < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.error(f"Job {job_id} chunk {chunk_id}: Error uploading {os.path.basename(json_file)}: {str(e)}")
+    
+    return patient_ids
 
 
 @app.get("/list-all-patients", response_class=JSONResponse)
@@ -1474,7 +1744,7 @@ async def delete_cohort(cohort_id: str):
 
 @app.post("/generate-download-synthetic-patients", response_class=JSONResponse)
 async def generate_download_synthetic_patients(
-    request: dict
+    request: SyntheaRequest
 ):
     """Generates synthetic patients and returns them as a downloadable zip file.
     
@@ -1495,23 +1765,16 @@ async def generate_download_synthetic_patients(
     import zipfile
     import asyncio
 
-    # Extract parameters from request body
-    num_patients = request.get('num_patients', 10)
-    num_years = request.get('num_years', 1)
-    exporter = request.get('exporter', 'fhir')
-    min_age = request.get('min_age', 0)
-    max_age = request.get('max_age', 140)
-    gender = request.get('gender', 'both')
+    # Extract parameters from request
+    num_patients = request.num_patients
+    num_years = request.num_years
+    exporter = request.exporter
+    min_age = request.min_age
+    max_age = request.max_age
+    gender = request.gender
     
-    # Print received parameters for debugging
-    print(f"\n==== RECEIVED REQUEST PARAMETERS ====")
-    print(f"num_patients: {num_patients}, type: {type(num_patients)}")
-    print(f"num_years: {num_years}, type: {type(num_years)}")
-    print(f"min_age: {min_age}, type: {type(min_age)}")
-    print(f"max_age: {max_age}, type: {type(max_age)}")
-    print(f"gender: {gender}, type: {type(gender)}")
-    print(f"exporter: {exporter}, type: {type(exporter)}")
-    print(f"==== END RECEIVED REQUEST PARAMETERS ====\n")
+    logger.debug(f"Generate download request: patients={num_patients}, years={num_years}, "
+                f"age={min_age}-{max_age}, gender={gender}, exporter={exporter}")
     
     # check if the exporter is valid
     if exporter not in ["csv", "fhir"]:
@@ -1524,9 +1787,10 @@ async def generate_download_synthetic_patients(
         return JSONResponse(status_code=400, content={"error": "Number of years must be greater than 0."})
     
     async def generate_patient_data():
+        temp_dir = None
         try:
             # Use the existing run_synthea function that has the debug prints
-            temp_dir, output_dir = run_synthea(
+            temp_dir, output_dir = await run_synthea(
                 num_patients=num_patients,
                 num_years=num_years,
                 min_age=min_age,
@@ -1550,7 +1814,7 @@ async def generate_download_synthetic_patients(
             return zip_path
         except Exception as e:
             # Clean up the temp directory in case of error
-            if 'temp_dir' in locals():
+            if temp_dir:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             raise e
 
@@ -1564,10 +1828,12 @@ async def generate_download_synthetic_patients(
         
         # Return the zip file as a download
         def iterfile():
-            with open(zip_path, 'rb') as f:
-                yield from f
-            # Clean up after sending the file
-            shutil.rmtree(os.path.dirname(zip_path), ignore_errors=True)
+            try:
+                with open(zip_path, 'rb') as f:
+                    yield from f
+            finally:
+                # Clean up after sending the file
+                shutil.rmtree(os.path.dirname(zip_path), ignore_errors=True)
             
         response = StreamingResponse(iterfile(), media_type="application/zip")
         response.headers['Content-Disposition'] = f'attachment; filename="synthea_output.zip"'

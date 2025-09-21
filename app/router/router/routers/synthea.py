@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query, Path
+from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+from typing import Optional
 import httpx
 import logging
 
@@ -340,3 +342,137 @@ async def get_cohort_metadata(cohort_id: int = Path(..., description="The cohort
     except httpx.RequestError as e:
         logger.error(f"Error getting metadata for cohort {cohort_id}: {e}")
         raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+# Pydantic model for async job requests
+class SyntheaAsyncRequest(BaseModel):
+    num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
+    num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
+    cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
+    exporter: str = Field("fhir", description="Export format: 'fhir' or 'csv'")
+    min_age: int = Field(0, ge=0, le=140, description="Minimum patient age")
+    max_age: int = Field(140, ge=0, le=140, description="Maximum patient age")
+    gender: str = Field("both", description="Gender: 'both', 'male', or 'female'")
+    state: Optional[str] = Field(None, description="US state for patient generation")
+    city: Optional[str] = Field(None, description="US city for patient generation (requires state)")
+    use_population_sampling: bool = Field(True, description="Sample states by population if no state specified")
+
+
+# New async job management endpoints
+
+@router.post("/synthetic-patients", response_class=JSONResponse)
+async def create_generation_job(request: SyntheaAsyncRequest):
+    """Create a new synthetic patient generation job (async)"""
+    url = f"{settings.synthea_server_url}/synthetic-patients"
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=request.model_dump())
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea backend error (create job): {e.response.text}")
+        detail = e.response.text or "Error creating generation job"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting Synthea backend (create job): {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+@router.get("/synthetic-patients/jobs/{job_id}", response_class=JSONResponse)
+async def get_job_status(job_id: str):
+    """Get the status of a generation job"""
+    url = f"{settings.synthea_server_url}/synthetic-patients/jobs/{job_id}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea backend error (job status): {e.response.text}")
+        detail = e.response.text or f"Error getting job status for {job_id}"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting Synthea backend (job status): {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+@router.get("/synthetic-patients/jobs", response_class=JSONResponse)
+async def list_all_jobs():
+    """List all synthetic patient generation jobs"""
+    url = f"{settings.synthea_server_url}/synthetic-patients/jobs"
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea backend error (list jobs): {e.response.text}")
+        detail = e.response.text or "Error listing jobs"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting Synthea backend (list jobs): {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+@router.delete("/synthetic-patients/jobs/{job_id}", response_class=JSONResponse)
+async def cancel_job(job_id: str):
+    """Cancel a running generation job"""
+    url = f"{settings.synthea_server_url}/synthetic-patients/jobs/{job_id}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.delete(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea backend error (cancel job): {e.response.text}")
+        detail = e.response.text or f"Error cancelling job {job_id}"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting Synthea backend (cancel job): {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+# Demographics endpoints
+
+@router.get("/demographics/states", response_class=JSONResponse)
+async def get_available_states():
+    """Get list of available US states for patient generation"""
+    url = f"{settings.synthea_server_url}/demographics/states"
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea backend error (states): {e.response.text}")
+        detail = e.response.text or "Error fetching states"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting Synthea backend (states): {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+@router.get("/demographics/cities/{state}", response_class=JSONResponse)
+async def get_cities_for_state(state: str):
+    """Get list of available cities for a specific state"""
+    url = f"{settings.synthea_server_url}/demographics/cities/{state}"
+    
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea backend error (cities for {state}): {e.response.text}")
+        detail = e.response.text or f"Error fetching cities for {state}"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting Synthea backend (cities): {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+

@@ -45,6 +45,7 @@ WORKDIR /app
 #RUN curl -L -o synthea-with-dependencies.jar https://github.com/synthetichealth/synthea/releases/download/master-branch-latest/synthea-with-dependencies.jar
 RUN curl -L -o synthea-with-dependencies.jar https://github.com/synthetichealth/synthea/releases/download/v3.2.0/synthea-with-dependencies.jar
 COPY modules ./modules
+COPY data ./data
 
 # Copy install dependencies first to leverage Docker cache
 COPY pyproject.toml ./

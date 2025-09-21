@@ -56,4 +56,5 @@ def show_dashboard():
     
     with col1:
         if st.button("View API Documentation", use_container_width=True):
-            st.info("Access full REST API at http://localhost:8000/docs")
+            from config import API_BASE
+            st.info(f"Access full REST API at {API_BASE}/docs")
