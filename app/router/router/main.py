@@ -89,12 +89,6 @@ async def health_check():
             "dependencies": {}
         }
 
-# Legacy endpoint for backward compatibility
-@app.get("/healthz")
-async def legacy_health_check():
-    """Legacy health check endpoint - redirects to /health"""
-    health_response = await health_check()
-    return {"status": "ok" if health_response["status"] == "healthy" else "error"}
 
 @app.get("/modeling/health")
 async def modeling_health_proxy():

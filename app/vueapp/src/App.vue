@@ -98,9 +98,61 @@ async function generatePatients() {
   loading.value = true
   genResponse.value = ""
   try {
-    const url = `${API_BASE}/synthetic/synthea/generate-synthetic-patients?num_patients=${numPatients.value}&num_years=${numYears.value}&cohort_id=${encodeURIComponent(cohortId.value)}`
-    const resp = await axios.post(url)
-    genResponse.value = JSON.stringify(resp.data, null, 2)
+    // Use the modern async API
+    const url = `${API_BASE}/synthetic/synthea/synthetic-patients`
+    const data = {
+      num_patients: numPatients.value,
+      num_years: numYears.value,
+      cohort_id: cohortId.value || null,
+      exporter: "fhir",
+      min_age: 0,
+      max_age: 140,
+      gender: "both",
+      use_population_sampling: true
+    }
+    
+    // Create the generation job
+    const jobResp = await axios.post(url, data)
+    const jobId = jobResp.data.job_id
+    genResponse.value = `Job created: ${jobId}\nStatus: ${jobResp.data.status}\nPolling for completion...`
+    
+    // Poll for job completion
+    const statusUrl = `${API_BASE}/synthetic/synthea/synthetic-patients/jobs/${jobId}`
+    let completed = false
+    let attempts = 0
+    const maxAttempts = 60 // 5 minutes max
+    
+    while (!completed && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
+      attempts++
+      
+      try {
+        const statusResp = await axios.get(statusUrl)
+        const status = statusResp.data.status
+        const progress = statusResp.data.progress || 0
+        
+        genResponse.value = `Job ${jobId}\nStatus: ${status}\nProgress: ${Math.round(progress * 100)}%\nPhase: ${statusResp.data.current_phase || 'unknown'}`
+        
+        if (status === 'completed') {
+          completed = true
+          genResponse.value += `\n\nCompleted!\nResult: ${JSON.stringify(statusResp.data.result, null, 2)}`
+        } else if (status === 'failed') {
+          completed = true
+          genResponse.value += `\n\nFailed: ${statusResp.data.error}`
+        } else if (status === 'cancelled') {
+          completed = true
+          genResponse.value += `\n\nCancelled`
+        }
+      } catch (pollError) {
+        genResponse.value += `\n\nError polling status: ${pollError.message}`
+        break
+      }
+    }
+    
+    if (!completed) {
+      genResponse.value += `\n\nTimeout after ${maxAttempts} attempts`
+    }
+    
   } catch (e) {
     genResponse.value = "Error: " + (e?.response?.data?.detail || e.message)
   } finally {

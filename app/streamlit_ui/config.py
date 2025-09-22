@@ -9,7 +9,7 @@ API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
 # Service endpoints for health checks - all routed through the router service
 SERVICES = {
-    "Router": f"{API_BASE}/healthz",
+    "Router": f"{API_BASE}/health",
     "Model Server": f"{API_BASE}/modeling/health",
     "Stats Server": f"{API_BASE}/stats/health", 
     "Synthea Server": f"{API_BASE}/synthetic/health"

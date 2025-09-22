@@ -102,18 +102,6 @@ def list_all_cohorts() -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-def get_cohort_metadata(cohort_id: str) -> Dict[str, Any]:
-    """Get metadata for a specific cohort"""
-    try:
-        response = requests.get(f"{API_BASE}/synthetic/synthea/cohort-metadata/{cohort_id}", timeout=DEFAULT_SETTINGS["timeout"])
-        if response.status_code == 200:
-            return {"success": True, "data": response.json()}
-        else:
-            return {"success": False, "error": response.text}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 def delete_cohort(cohort_id: str) -> Dict[str, Any]:
     """Delete a cohort"""
     try:

@@ -7,7 +7,7 @@ import pandas as pd
 from datetime import datetime
 from api_client import (
     search_patients, get_patient_details, list_all_synthetic_patients,
-    list_all_cohorts, get_cohort_metadata, delete_cohort,
+    list_all_cohorts, delete_cohort,
     get_available_cohorts, get_visualization_image, load_resource_data
 )
 from utils import process_patient_search_results, process_synthetic_patients, process_cohorts_data
@@ -315,44 +315,25 @@ def show_cohorts_section():
     
     st.markdown("---")
     
-    # Cohort actions
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**Cohort Information**")
-        available_cohorts = get_available_cohorts()
-        if available_cohorts:
-            cohort_id_info = st.selectbox("Select cohort for metadata", 
-                                        [""] + available_cohorts, 
-                                        key="cohort_info_dropdown")
-            if st.button("Get Cohort Metadata", key="get_cohort_meta") and cohort_id_info:
-                result = get_cohort_metadata(cohort_id_info)
+    # Cohort management
+    st.markdown("**Cohort Management**")
+    available_cohorts = get_available_cohorts()
+    if available_cohorts:
+        cohort_id_delete = st.selectbox("Select cohort to delete", 
+                                      [""] + available_cohorts, 
+                                      key="cohort_delete_dropdown")
+        if cohort_id_delete:
+            st.warning(f"⚠️ You are about to delete cohort: **{cohort_id_delete}**")
+            confirm_delete = st.checkbox(f"I understand this action cannot be undone", key="confirm_delete")
+            if st.button("🗑️ Delete Cohort", key="delete_cohort", type="secondary", disabled=not confirm_delete) and cohort_id_delete:
+                result = delete_cohort(cohort_id_delete)
                 if result["success"]:
-                    st.json(result["data"])
+                    st.success(f"Cohort deleted successfully: {result['data']}")
+                    st.rerun()  # Refresh the page to update the dropdown
                 else:
-                    st.error(f"Failed to get cohort metadata: {result['error']}")
-        else:
-            st.info("No cohorts available")
-    
-    with col2:
-        st.markdown("**Cohort Management**")
-        available_cohorts = get_available_cohorts()
-        if available_cohorts:
-            cohort_id_delete = st.selectbox("Select cohort to delete", 
-                                          [""] + available_cohorts, 
-                                          key="cohort_delete_dropdown")
-            if cohort_id_delete:
-                st.warning(f"⚠️ You are about to delete cohort: **{cohort_id_delete}**")
-                confirm_delete = st.checkbox(f"I understand this action cannot be undone", key="confirm_delete")
-                if st.button("🗑️ Delete Cohort", key="delete_cohort", type="secondary", disabled=not confirm_delete) and cohort_id_delete:
-                    result = delete_cohort(cohort_id_delete)
-                    if result["success"]:
-                        st.success(f"Cohort deleted successfully: {result['data']}")
-                        st.rerun()  # Refresh the page to update the dropdown
-                    else:
-                        st.error(f"Failed to delete cohort: {result['error']}")
-        else:
-            st.info("No cohorts available to delete")
+                    st.error(f"Failed to delete cohort: {result['error']}")
+    else:
+        st.info("No cohorts available to delete")
 
 
 def show_visualization_image(endpoint, limit, cohort_filter=None, bracket_size=None):
