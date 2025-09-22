@@ -70,7 +70,7 @@ else
 fi
 
 echo "Step 2/2: Building application images..."
-docker compose build $DOCKER_ARGS
+docker compose build --parallel $DOCKER_ARGS
 
 echo "Build complete! You can now run:"
 echo "   docker compose up --detach"

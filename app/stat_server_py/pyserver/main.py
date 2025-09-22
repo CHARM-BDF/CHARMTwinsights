@@ -46,6 +46,50 @@ fs = Fhirsearch(fhir_base_url=settings.hapi_url)
 SYNTHEA_SERVER_URL = settings.synthea_server_url
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    try:
+        # Test HAPI FHIR server connection
+        hapi_connected = False
+        hapi_error = None
+        try:
+            test_response = requests.get(f"{settings.hapi_url}/$meta", timeout=5)
+            hapi_connected = test_response.status_code == 200
+        except Exception as e:
+            hapi_error = str(e)
+        
+        # Service is healthy if it can start and respond (regardless of HAPI)
+        # This allows for better debugging of individual service issues
+        service_status = "healthy"
+        
+        return {
+            "status": service_status,
+            "service": "stat_server_py",
+            "dependencies": {
+                "hapi_fhir": {
+                    "connected": hapi_connected,
+                    "url": settings.hapi_url,
+                    "error": hapi_error if not hapi_connected else None
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "service": "stat_server_py",
+            "error": str(e),
+            "dependencies": {
+                "hapi_fhir": {
+                    "connected": False,
+                    "url": settings.hapi_url,
+                    "error": "Health check failed"
+                }
+            }
+        }
+
+
 @app.get("/patients", response_class=JSONResponse)
 async def get_patients(
     name: str = Query(None, description="Patient name to search for"),

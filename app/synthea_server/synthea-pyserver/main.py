@@ -149,6 +149,80 @@ def redirect_to_docs():
     return JSONResponse(status_code=307, content={"message": "Redirecting to /docs for API documentation."}, headers={"Location": "/docs"})
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    try:
+        # Check core Synthea dependencies
+        synthea_jar_exists = os.path.exists("synthea-with-dependencies.jar")
+        modules_exist = os.path.exists("modules") and os.path.isdir("modules")
+        demographics_available = os.path.exists("data/demographics.csv")
+        
+        # Service is healthy if core dependencies are available
+        core_dependencies_ok = synthea_jar_exists and modules_exist and demographics_available
+        service_status = "healthy" if core_dependencies_ok else "unhealthy"
+        
+        # Test HAPI FHIR server connection as a dependency check
+        hapi_url = "http://hapi:8080/fhir"
+        hapi_connected = False
+        hapi_error = None
+        try:
+            test_response = requests.get(f"{hapi_url}/$meta", timeout=5)
+            hapi_connected = test_response.status_code == 200
+        except Exception as e:
+            hapi_error = str(e)
+        
+        return {
+            "status": service_status,
+            "service": "synthea_server",
+            "dependencies": {
+                "synthea_jar": {
+                    "available": synthea_jar_exists,
+                    "error": "synthea-with-dependencies.jar not found" if not synthea_jar_exists else None
+                },
+                "modules": {
+                    "available": modules_exist,
+                    "error": "modules directory not found" if not modules_exist else None
+                },
+                "demographics": {
+                    "available": demographics_available,
+                    "error": "data/demographics.csv not found" if not demographics_available else None
+                },
+                "hapi_fhir": {
+                    "connected": hapi_connected,
+                    "url": hapi_url,
+                    "error": hapi_error if not hapi_connected else None
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {
+            "status": "unhealthy",
+            "service": "synthea_server",
+            "error": str(e),
+            "dependencies": {
+                "synthea_jar": {
+                    "available": False,
+                    "error": "Health check failed"
+                },
+                "modules": {
+                    "available": False,
+                    "error": "Health check failed"
+                },
+                "demographics": {
+                    "available": False,
+                    "error": "Health check failed"
+                },
+                "hapi_fhir": {
+                    "connected": False,
+                    "url": "http://hapi:8080/fhir",
+                    "error": "Health check failed"
+                }
+            }
+        }
+
+
 async def run_synthea(num_patients, num_years, min_age=0, max_age=140, gender="both", exporter="fhir", state=None, city=None):
     logger.debug(f"Running Synthea with parameters: patients={num_patients}, years={num_years}, "
                 f"age={min_age}-{max_age}, gender={gender}, exporter={exporter}, state={state}, city={city}")

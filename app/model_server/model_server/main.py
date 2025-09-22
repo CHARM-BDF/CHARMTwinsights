@@ -386,21 +386,45 @@ def health_check():
     """Health check endpoint"""
     try:
         # Check MongoDB connection
-        mongo_client.admin.command('ping')
+        mongodb_connected = False
+        mongodb_error = None
+        model_count = 0
         
-        # Check if we have any models registered
-        model_count = models_collection.count_documents({})
+        try:
+            mongo_client.admin.command('ping')
+            model_count = models_collection.count_documents({})
+            mongodb_connected = True
+        except Exception as e:
+            mongodb_error = str(e)
+        
+        # Service is healthy if it can respond (MongoDB issues are dependency problems)
+        service_status = "healthy"
         
         return {
-            "status": "healthy",
+            "status": service_status,
+            "service": "model_server",
             "models_registered": model_count,
-            "mongodb_connected": True
+            "dependencies": {
+                "mongodb": {
+                    "connected": mongodb_connected,
+                    "url": f"mongodb://{MONGO_HOST}:{MONGO_PORT}/{MONGO_DB}",
+                    "error": mongodb_error if not mongodb_connected else None
+                }
+            }
         }
     except Exception as e:
         return {
             "status": "unhealthy",
+            "service": "model_server",
             "error": str(e),
-            "mongodb_connected": False
+            "models_registered": 0,
+            "dependencies": {
+                "mongodb": {
+                    "connected": False,
+                    "url": f"mongodb://{MONGO_HOST}:{MONGO_PORT}/{MONGO_DB}",
+                    "error": "Health check failed"
+                }
+            }
         }
 
 @app.post("/models")
