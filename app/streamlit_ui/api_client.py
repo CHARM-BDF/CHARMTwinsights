@@ -116,7 +116,7 @@ def delete_cohort(cohort_id: str) -> Dict[str, Any]:
 
 def generate_synthetic_patients(num_patients: int, num_years: int, cohort_id: str,
                               export_format: str = "fhir", min_age: int = 0, 
-                              max_age: int = 90, gender: str = "both",
+                              max_age: int = 140, gender: str = "both",
                               state: Optional[str] = None, city: Optional[str] = None,
                               use_population_sampling: bool = True) -> Dict[str, Any]:
     """Generate synthetic patients using async job system via router"""

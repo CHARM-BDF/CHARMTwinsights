@@ -58,7 +58,7 @@ def show_generation_interface():
     with col1:
         st.markdown("**📈 Generation Parameters**")
         num_patients = st.slider("Number of Patients", min_value=1, max_value=1000, value=10)
-        num_years = st.slider("Years of Medical History", min_value=1, max_value=20, value=2)
+        num_years = st.slider("Years of Medical History", min_value=1, max_value=100, value=2)
         cohort_id = st.text_input(
             "Cohort ID", 
             value="research-cohort", 
@@ -68,8 +68,8 @@ def show_generation_interface():
     
     with col2:
         st.markdown("**👤 Patient Demographics**")
-        min_age = st.slider("Minimum Age", min_value=0, max_value=100, value=0)
-        max_age = st.slider("Maximum Age", min_value=0, max_value=100, value=90)
+        min_age = st.slider("Minimum Age", min_value=0, max_value=140, value=0)
+        max_age = st.slider("Maximum Age", min_value=0, max_value=140, value=90)
         gender = st.selectbox("Gender Distribution", ["both", "male", "female"])
         export_format = st.selectbox("Export Format", ["fhir", "csv"])
     
