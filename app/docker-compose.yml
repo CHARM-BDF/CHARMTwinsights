@@ -75,7 +75,7 @@ services:
 
 
   hapi_db:
-    image: postgres
+    image: postgres:16
     restart: always
     environment:
       POSTGRES_PASSWORD: admin
