@@ -102,18 +102,6 @@ def list_all_cohorts() -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-def get_cohort_metadata(cohort_id: str) -> Dict[str, Any]:
-    """Get metadata for a specific cohort"""
-    try:
-        response = requests.get(f"{API_BASE}/synthetic/synthea/cohort-metadata/{cohort_id}", timeout=DEFAULT_SETTINGS["timeout"])
-        if response.status_code == 200:
-            return {"success": True, "data": response.json()}
-        else:
-            return {"success": False, "error": response.text}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-
 def delete_cohort(cohort_id: str) -> Dict[str, Any]:
     """Delete a cohort"""
     try:
@@ -128,28 +116,35 @@ def delete_cohort(cohort_id: str) -> Dict[str, Any]:
 
 def generate_synthetic_patients(num_patients: int, num_years: int, cohort_id: str,
                               export_format: str = "fhir", min_age: int = 0, 
-                              max_age: int = 90, gender: str = "both") -> Dict[str, Any]:
-    """Generate synthetic patients"""
+                              max_age: int = 140, gender: str = "both",
+                              state: Optional[str] = None, city: Optional[str] = None,
+                              use_population_sampling: bool = True) -> Dict[str, Any]:
+    """Generate synthetic patients using async job system via router"""
     try:
-        url = f"{API_BASE}/synthetic/synthea/generate-synthetic-patients"
-        params = {
+        url = f"{API_BASE}/synthetic/synthea/synthetic-patients"
+        
+        data = {
             "num_patients": num_patients,
             "num_years": num_years,
             "cohort_id": cohort_id,
             "exporter": export_format,
             "min_age": min_age,
             "max_age": max_age,
-            "gender": gender
+            "gender": gender,
+            "use_population_sampling": use_population_sampling
         }
         
-        response = requests.post(url, params=params, timeout=DEFAULT_SETTINGS["generation_timeout"])
+        if state:
+            data["state"] = state
+        if city:
+            data["city"] = city
+        
+        response = requests.post(url, json=data, timeout=30)
         
         if response.status_code == 200:
             return {"success": True, "data": response.json()}
         else:
             return {"success": False, "error": response.text}
-    except requests.exceptions.Timeout:
-        return {"success": False, "error": "Generation timed out. Try with fewer patients or shorter history."}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -220,3 +215,67 @@ def load_resource_data(resource_type: str) -> Dict[str, Any]:
             return {"success": False, "error": response.text}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# New functions for async job management and demographics
+
+def get_job_status(job_id: str) -> Dict[str, Any]:
+    """Get the status of a synthetic patient generation job"""
+    try:
+        response = requests.get(f"{API_BASE}/synthetic/synthea/synthetic-patients/jobs/{job_id}", timeout=DEFAULT_SETTINGS["timeout"])
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            return {"success": False, "error": response.text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def list_all_jobs() -> Dict[str, Any]:
+    """List all synthetic patient generation jobs"""
+    try:
+        response = requests.get(f"{API_BASE}/synthetic/synthea/synthetic-patients/jobs", timeout=DEFAULT_SETTINGS["timeout"])
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            return {"success": False, "error": response.text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def cancel_job(job_id: str) -> Dict[str, Any]:
+    """Cancel a running generation job"""
+    try:
+        response = requests.delete(f"{API_BASE}/synthetic/synthea/synthetic-patients/jobs/{job_id}", timeout=DEFAULT_SETTINGS["timeout"])
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            return {"success": False, "error": response.text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_available_states() -> Dict[str, Any]:
+    """Get list of available US states for patient generation"""
+    try:
+        response = requests.get(f"{API_BASE}/synthetic/synthea/demographics/states", timeout=DEFAULT_SETTINGS["timeout"])
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            return {"success": False, "error": response.text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_cities_for_state(state: str) -> Dict[str, Any]:
+    """Get list of available cities for a specific state"""
+    try:
+        response = requests.get(f"{API_BASE}/synthetic/synthea/demographics/cities/{state}", timeout=DEFAULT_SETTINGS["timeout"])
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            return {"success": False, "error": response.text}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+

@@ -7,13 +7,12 @@ import os
 # API Configuration
 API_BASE = os.getenv("API_BASE", "http://localhost:8000")
 
-# Service endpoints for health checks
+# Service endpoints for health checks - all routed through the router service
 SERVICES = {
-    "Router": f"{API_BASE}/healthz",
-    "Model Server": f"{API_BASE.replace(':8000', ':8004')}/health" if "localhost" in API_BASE else "http://model_server:8000/health",
-    # These services don't have /health endpoints, so we'll check their docs endpoints instead
-    "Stats Server": f"{API_BASE.replace(':8000', ':8001')}/docs" if "localhost" in API_BASE else "http://stat_server_py:8000/docs", 
-    "Synthea Server": f"{API_BASE.replace(':8000', ':8003')}/docs" if "localhost" in API_BASE else "http://synthea_server:8000/docs"
+    "Router": f"{API_BASE}/health",
+    "Model Server": f"{API_BASE}/modeling/health",
+    "Stats Server": f"{API_BASE}/stats/health", 
+    "Synthea Server": f"{API_BASE}/synthetic/health"
 }
 
 # Page configuration
@@ -73,7 +72,6 @@ CUSTOM_CSS = """
 
 # Default settings
 DEFAULT_SETTINGS = {
-    "timeout": 10,
-    "generation_timeout": 300,
+    "timeout": 30,  # Increased from 10 to handle slower container startup
     "visualization_timeout": 30
 }

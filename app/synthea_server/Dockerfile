@@ -15,7 +15,7 @@ WORKDIR /app
 
 
 # Use an official lightweight Python image.
-FROM ubuntu:24.10
+FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y \
     curl \
@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y \
     libmagic1 \
     file \
     && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update
 
 RUN apt-get update && apt-get install -y \
     python3.13 \
@@ -45,6 +49,7 @@ WORKDIR /app
 #RUN curl -L -o synthea-with-dependencies.jar https://github.com/synthetichealth/synthea/releases/download/master-branch-latest/synthea-with-dependencies.jar
 RUN curl -L -o synthea-with-dependencies.jar https://github.com/synthetichealth/synthea/releases/download/v3.2.0/synthea-with-dependencies.jar
 COPY modules ./modules
+COPY data ./data
 
 # Copy install dependencies first to leverage Docker cache
 COPY pyproject.toml ./

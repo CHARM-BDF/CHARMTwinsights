@@ -6,8 +6,12 @@ services:
 
   vueapp:
     build: ./vueapp
+    ports:
+      - "8005:80"
     depends_on:
       - router
+    environment:
+      - VITE_API_BASE=http://router:8000
 
   streamlit_ui:
     build: ./streamlit_ui
@@ -16,8 +20,6 @@ services:
     depends_on:
       router:
         condition: service_started
-      model_server:
-        condition: service_healthy
     environment:
       - API_BASE=http://router:8000
 
@@ -27,11 +29,13 @@ services:
       - "8000:8000"
     depends_on:
       stat_server_py:
-        condition: service_started
+        condition: service_healthy
+      stat_server_r:
+        condition: service_healthy
       hapi:
         condition: service_started
       synthea_server:
-        condition: service_started
+        condition: service_healthy
       model_server:
         condition: service_healthy
 
@@ -40,19 +44,29 @@ services:
     build: ./stat_server_py
     depends_on:
       - hapi
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 
   stat_server_r:
     build: ./stat_server_r
     depends_on:
       - hapi
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 
   hapi:
     container_name: hapi
     image: "hapiproject/hapi:latest"
-    ports:
-      - "8080:8080"
     configs:
       - source: hapi
         target: /app/config/application.yaml
@@ -61,7 +75,7 @@ services:
 
 
   hapi_db:
-    image: postgres
+    image: postgres:16
     restart: always
     environment:
       POSTGRES_PASSWORD: admin
@@ -75,6 +89,12 @@ services:
     depends_on:
       - hapi
     build: ./synthea_server
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 
   model_server:
