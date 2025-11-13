@@ -88,7 +88,7 @@ All built-in models (IrisModel, CoxCOPDModel, DPCGANSModel) will be automaticall
 Synthetic patient data in FHIR format may be generated via a POST request to http://localhost:8000/synthetic/synthea/generate-synthetic-patients, with url parameters `num_patients`, `num_years`, 
 and `cohort_id`. The patients will be simulated with Synthea, and their records will be tagged with the provided `cohort_id` (defaulting to `default`).
 
-It is possible to re-use the same cohort ID across multiple generations, in which case newly generated patients will be added to the cohort.
+It is possible to re-use the same cohort ID across multiple generations, in which case newly generated patients will be added to the cohort. It is also possible to specify the US states patients should be sampled from, and large cohort generations is broken into batches managed by an internal job queue.
 
 A testing script demonstrates this (retrying until the Synthea and HAPI services are up and running), creating a `cohort1` with 6 members, and a `cohort2` with 3. Each generation takes a few seconds.
 
