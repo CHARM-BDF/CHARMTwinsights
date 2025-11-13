@@ -496,3 +496,198 @@ async def proxy_visualize_procedures_by_age(
     except httpx.RequestError as e:
         logger.error(f"Error contacting backend: {e}")
         raise HTTPException(status_code=500, detail="stat_server_py unreachable")
+
+@router.get("/visualize-medications", response_class=Response)
+async def proxy_visualize_medications(
+    limit: int = Query(10, description="Limit the number of medications to show"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common medications.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of medications to show
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    url = f"{BACKEND_URL}/visualize-medications"
+    params = {"limit": limit}
+    if cohort_id:
+        params["cohort_id"] = cohort_id
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:  # Longer timeout for image generation
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return Response(content=resp.content, media_type=resp.headers.get('content-type', 'image/png'))
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Backend error: {e.response.text}")
+        detail = e.response.text or "Error generating medication visualization"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting backend: {e}")
+        raise HTTPException(status_code=500, detail="stat_server_py unreachable")
+
+
+@router.get("/visualize-medications-by-gender", response_class=Response)
+async def proxy_visualize_medications_by_gender(
+    limit: int = Query(10, description="Limit the number of medications to show per gender"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common medications broken down by gender.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of medications to show per gender
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    url = f"{BACKEND_URL}/visualize-medications-by-gender"
+    params = {"limit": limit}
+    if cohort_id:
+        params["cohort_id"] = cohort_id
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:  # Longer timeout for image generation
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return Response(content=resp.content, media_type=resp.headers.get('content-type', 'image/png'))
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Backend error: {e.response.text}")
+        detail = e.response.text or "Error generating medication visualization by gender"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting backend: {e}")
+        raise HTTPException(status_code=500, detail="stat_server_py unreachable")
+
+
+@router.get("/visualize-medications-by-age", response_class=Response)
+async def proxy_visualize_medications_by_age(
+    limit: int = Query(10, description="Limit the number of medications to show per age bracket"),
+    bracket_size: int = Query(5, description="Size of each age bracket in years"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common medications broken down by age brackets.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of medications to show per age bracket
+    - bracket_size: Size of each age bracket in years
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    url = f"{BACKEND_URL}/visualize-medications-by-age"
+    params = {"limit": limit, "bracket_size": bracket_size}
+    if cohort_id:
+        params["cohort_id"] = cohort_id
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:  # Longer timeout for image generation
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return Response(content=resp.content, media_type=resp.headers.get('content-type', 'image/png'))
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Backend error: {e.response.text}")
+        detail = e.response.text or "Error generating medication visualization by age"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting backend: {e}")
+        raise HTTPException(status_code=500, detail="stat_server_py unreachable")
+
+
+@router.get("/visualize-diagnostics", response_class=Response)
+async def proxy_visualize_diagnostics(
+    limit: int = Query(10, description="Limit the number of diagnostic reports to show"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common diagnostic report types.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of diagnostic report types to show
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    url = f"{BACKEND_URL}/visualize-diagnostics"
+    params = {"limit": limit}
+    if cohort_id:
+        params["cohort_id"] = cohort_id
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:  # Longer timeout for image generation
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return Response(content=resp.content, media_type=resp.headers.get('content-type', 'image/png'))
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Backend error: {e.response.text}")
+        detail = e.response.text or "Error generating diagnostic visualization"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting backend: {e}")
+        raise HTTPException(status_code=500, detail="stat_server_py unreachable")
+
+
+@router.get("/visualize-diagnostics-by-gender", response_class=Response)
+async def proxy_visualize_diagnostics_by_gender(
+    limit: int = Query(10, description="Limit the number of diagnostic report types to show per gender"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common diagnostic report types broken down by gender.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of diagnostic report types to show per gender
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    url = f"{BACKEND_URL}/visualize-diagnostics-by-gender"
+    params = {"limit": limit}
+    if cohort_id:
+        params["cohort_id"] = cohort_id
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:  # Longer timeout for image generation
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return Response(content=resp.content, media_type=resp.headers.get('content-type', 'image/png'))
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Backend error: {e.response.text}")
+        detail = e.response.text or "Error generating diagnostic visualization by gender"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting backend: {e}")
+        raise HTTPException(status_code=500, detail="stat_server_py unreachable")
+
+
+@router.get("/visualize-diagnostics-by-age", response_class=Response)
+async def proxy_visualize_diagnostics_by_age(
+    limit: int = Query(10, description="Limit the number of diagnostic report types to show per age bracket"),
+    bracket_size: int = Query(5, description="Size of each age bracket in years"),
+    cohort_id: str = Query(None, description="Optional cohort ID to filter resources by cohort tag")
+):
+    """
+    Generates a bar chart visualization of the most common diagnostic report types broken down by age brackets.
+    Returns a PNG image of the visualization.
+    
+    Parameters:
+    - limit: Maximum number of diagnostic report types to show per age bracket
+    - bracket_size: Size of each age bracket in years
+    - cohort_id: Optional cohort ID to filter resources by cohort tag
+    """
+    url = f"{BACKEND_URL}/visualize-diagnostics-by-age"
+    params = {"limit": limit, "bracket_size": bracket_size}
+    if cohort_id:
+        params["cohort_id"] = cohort_id
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:  # Longer timeout for image generation
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            return Response(content=resp.content, media_type=resp.headers.get('content-type', 'image/png'))
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Backend error: {e.response.text}")
+        detail = e.response.text or "Error generating diagnostic visualization by age"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error contacting backend: {e}")
+        raise HTTPException(status_code=500, detail="stat_server_py unreachable")

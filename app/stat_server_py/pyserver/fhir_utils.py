@@ -14,6 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from fastapi import HTTPException, Response, Query
 from typing import Dict, List, Set, Any, Optional, Tuple
+from datetime import datetime
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,13 +29,13 @@ class FHIRResourceProcessor:
         """
         self.hapi_url = hapi_url.rstrip('/')
         
-    async def fetch_fhir_resources(self, resource_type: str, include_patient: bool = True, count: int = 1000, cohort_id: str = None) -> Dict:
+    async def fetch_fhir_resources(self, resource_type: str, include_patients: bool = True, count: int = 1000, cohort_id: str = None) -> Dict:
         """
         Fetch FHIR resources with included patient data.
         
         Args:
             resource_type: The FHIR resource type to fetch (e.g., 'Condition', 'Procedure', 'Observation')
-            include_patient: Whether to include patient resources
+            include_patients: Whether to include patient resources
             count: Maximum number of resources to fetch
             cohort_id: Optional cohort ID to filter resources by cohort tag
             
@@ -52,7 +53,7 @@ class FHIRResourceProcessor:
                 params.append(f"_tag=urn:charm:cohort|{cohort_id}")
             
             # Add patient include if needed
-            if include_patient:
+            if include_patients:
                 params.append(f"_include={resource_type}:patient")
             
             # Construct URL with all parameters
@@ -211,112 +212,156 @@ class FHIRResourceProcessor:
         Args:
             resource_type: The FHIR resource type to process (e.g., 'Condition', 'Procedure', 'Observation')
             include_patients: Whether to include patient IDs
-            include_patient_details: Whether to include detailed patient information
+            include_patient_details: Whether to include formatted patient details
+            cohort_id: Optional cohort ID to filter resources by cohort tag
             
         Returns:
             dict: Summary of the resources
         """
         try:
-            # Fetch the resources
-            bundle = await self.fetch_fhir_resources(resource_type, include_patient=include_patient_details, cohort_id=cohort_id)
+            # Fetch resources from HAPI FHIR server
+            bundle = await self.fetch_fhir_resources(resource_type, include_patients=include_patients, cohort_id=cohort_id)
             
-            if not bundle or 'entry' not in bundle or not bundle['entry']:
-                logger.info(f"No {resource_type.lower()}s found in the HAPI FHIR server")
-                return {f"{resource_type.lower()}s": [], "total_count": 0}
+            # Initialize result structure
+            resource_name_plural = resource_type.lower() + 's'
+            result = {
+                resource_name_plural: [],
+                f'total_{resource_name_plural}': 0,
+                f'unique_{resource_type.lower()}_types': 0,
+                'total_patients': 0
+            }
             
-            # Dictionary to store resources by display name
-            resources_by_display = {}
-            # Dictionary to store patient details by ID
-            patients_by_id = {}
+            # Check if bundle has entries
+            if 'entry' not in bundle or not bundle['entry']:
+                logger.warning(f"No entries found in bundle for {resource_type} with cohort_id={cohort_id}")
+                return result
+                
+            # Extract resources and patients
+            resources = []
+            patients = {}
+            patients_by_id = {}  # Will store formatted patient details by ID
             
-            # Process each entry in the bundle
             for entry in bundle['entry']:
-                resource = entry.get('resource', {})
-                entry_resource_type = resource.get('resourceType')
-                
-                # Process Patient resources to extract patient details
-                if entry_resource_type == 'Patient':
-                    try:
-                        patient_id = resource.get('id')
-                        patient_details = self.extract_patient_details(resource)
-                        if patient_details and patient_id:
-                            patients_by_id[patient_id] = patient_details
-                    except Exception as e:
-                        logger.warning(f"Error processing patient {resource.get('id', 'unknown')}: {str(e)}")
-                
-                # Process the main resource type
-                elif entry_resource_type == resource_type:
-                    try:
-                        # Extract display name
-                        display_name = self.extract_display_name(resource, resource_type)
-                        
-                        # Extract patient reference
-                        patient_id = self.extract_patient_reference(resource)
-                        
-                        # Extract codes
-                        codes = self.extract_codes(resource)
-                        
-                        # Initialize entry for this display name if not exists
-                        if display_name not in resources_by_display:
-                            resources_by_display[display_name] = {
-                                "patient_ids": set(),
-                                "count": 0,
-                                "codes": set()
-                            }
-                        
-                        # Add patient to this resource
-                        if patient_id:
-                            resources_by_display[display_name]["patient_ids"].add(patient_id)
-                        
-                        # Increment count
-                        resources_by_display[display_name]["count"] += 1
-                        
-                        # Add codes
-                        resources_by_display[display_name]["codes"].update(codes)
+                if 'resource' not in entry:
+                    continue
                     
-                    except Exception as e:
-                        logger.warning(f"Error processing {resource_type.lower()} {resource.get('id', 'unknown')}: {str(e)}")
+                resource = entry['resource']
+                resource_type_actual = resource.get('resourceType', '')
+                
+                if resource_type_actual == resource_type:
+                    resources.append(resource)
+                elif resource_type_actual == 'Patient' and include_patients:
+                    patient_id = resource.get('id')
+                    if patient_id:
+                        patients[patient_id] = resource
+                        
+                        # Format patient details for display
+                        if include_patient_details:
+                            try:
+                                # Extract gender
+                                gender = resource.get('gender', 'Unknown')
+                                
+                                # Extract birth date and calculate age
+                                birth_date = resource.get('birthDate')
+                                age = None
+                                if birth_date:
+                                    try:
+                                        birth_year = int(birth_date.split('-')[0])
+                                        current_year = datetime.now().year
+                                        age = current_year - birth_year
+                                        
+                                        # Adjust age if birthday hasn't occurred yet this year
+                                        if len(birth_date.split('-')) >= 3:
+                                            birth_month = int(birth_date.split('-')[1])
+                                            birth_day = int(birth_date.split('-')[2])
+                                            today = datetime.now()
+                                            if (today.month, today.day) < (birth_month, birth_day):
+                                                age -= 1
+                                    except Exception as e:
+                                        logger.warning(f"Error calculating age from birthDate '{birth_date}': {str(e)}")
+                                
+                                # Format the patient detail string
+                                age_str = f"Age: {age}y" if age is not None else "Age: Unknown"
+                                patients_by_id[patient_id] = f"ID: {patient_id}, {gender.capitalize()}, {age_str}"
+                                
+                            except Exception as e:
+                                logger.warning(f"Error formatting patient details for ID {patient_id}: {str(e)}")
+                                patients_by_id[patient_id] = f"ID: {patient_id}, Unknown gender, Unknown age"
             
-            # Convert the resources_by_display to the final format
-            resource_summary = []
-            resource_name_singular = resource_type.lower()
-            code_field_name = f"{resource_name_singular}_codes"
+            logger.info(f"Found {len(resources)} {resource_type} resources and {len(patients)} patient resources")
             
-            for display_name, data in resources_by_display.items():
-                summary_item = {
-                    f"{resource_name_singular}_name": display_name,
-                    "count": data["count"],
-                    "patient_count": len(data["patient_ids"]),
-                    code_field_name: list(data["codes"])
+            # Process resources
+            resource_counts = {}
+            patient_resource_map = {}
+            
+            for resource in resources:
+                # Extract display name
+                display_name = self.extract_display_name(resource, resource_type)
+                
+                # Extract patient reference
+                patient_ref = self.extract_patient_reference(resource)
+                patient_id = patient_ref.split('/')[-1] if patient_ref else None
+                
+                # Count resources by type
+                if display_name not in resource_counts:
+                    resource_counts[display_name] = {
+                        f'{resource_type.lower()}_name': display_name,
+                        'count': 0,
+                        'patients': set()
+                    }
+                    
+                resource_counts[display_name]['count'] += 1
+                
+                # Track patients with this resource type
+                if patient_id:
+                    resource_counts[display_name]['patients'].add(patient_id)
+                    
+                    # Map patients to resources
+                    if patient_id not in patient_resource_map:
+                        patient_resource_map[patient_id] = set()
+                    patient_resource_map[patient_id].add(display_name)
+            
+            # Convert to list and add patient details if requested
+            resource_list = []
+            for name, data in resource_counts.items():
+                item = {
+                    f'{resource_type.lower()}_name': name,
+                    'count': data['count']
                 }
                 
+                # Add patient IDs or details
                 # Add patient information based on the requested detail level
                 if include_patients:
+                    # Always include the raw patient IDs for internal use
+                    item["patient_ids"] = list(data["patients"])
+                    
                     if include_patient_details:
                         # Get patient details for each patient ID
                         patient_details = []
-                        for patient_id in data["patient_ids"]:
+                        for patient_id in data["patients"]:
                             if patient_id in patients_by_id:
                                 # Patient details are already formatted as a string
                                 patient_details.append(patients_by_id[patient_id])
                             else:
                                 # For patients without details, just show the ID
                                 patient_details.append(f"ID: {patient_id}, Unknown gender, Unknown age")
-                        summary_item["patients"] = patient_details
-                    else:
-                        # Just include the patient IDs
-                        summary_item["patient_ids"] = list(data["patient_ids"])
+                        item["patients"] = patient_details
                 
-                resource_summary.append(summary_item)
+                resource_list.append(item)
             
             # Sort by frequency (most common first)
-            resource_summary.sort(key=lambda x: x["count"], reverse=True)
+            resource_list.sort(key=lambda x: x["count"], reverse=True)
             
+            # Define resource name variables
+            resource_name_singular = resource_type.lower()
             resource_name_plural = f"{resource_name_singular}s"
+            
+            logger.info(f"Processed {len(resource_list)} {resource_name_plural} with {len(patients_by_id)} patients")
+            
             return {
-                resource_name_plural: resource_summary,
-                f"total_{resource_name_plural}": sum(r["count"] for r in resource_summary),
-                f"unique_{resource_name_singular}_types": len(resource_summary),
+                resource_name_plural: resource_list,
+                f"total_{resource_name_plural}": sum(r["count"] for r in resource_list),
+                f"unique_{resource_name_singular}_types": len(resource_list),
                 "total_patients": len(patients_by_id) if include_patient_details else None
             }
         
@@ -368,10 +413,8 @@ class FHIRResourceProcessor:
         counts = []
         
         for resource in resources:
-            # Truncate long names for better display
+            # Use the full name without truncation
             name = resource[name_field]
-            if len(name) > 40:
-                name = name[:37] + "..."
             names.append(name)
             counts.append(resource["count"])
             
@@ -396,10 +439,19 @@ class FHIRResourceProcessor:
                     age_str = age_part.lower().replace("age:", "").strip()
                     if age_str.endswith("y"):  # Handle "23y" format
                         age_str = age_str[:-1]
+                    if age_str.endswith("years"):  # Handle "23 years" format
+                        age_str = age_str.replace("years", "").strip()
                     if age_str.isdigit():
-                        return int(age_str)
-        except Exception:
-            pass
+                        age = int(age_str)
+                        # Log the extracted age for debugging
+                        logger.debug(f"Extracted age {age} from patient detail: {patient_detail}")
+                        return age
+                    else:
+                        logger.warning(f"Non-numeric age string: '{age_str}' from patient detail: {patient_detail}")
+            else:
+                logger.warning(f"Patient detail doesn't have expected format: {patient_detail}")
+        except Exception as e:
+            logger.error(f"Error extracting age from patient detail: {patient_detail}, error: {str(e)}")
         return None
     
     def _get_age_bracket(self, age: int, bracket_size: int = 5) -> str:
@@ -508,17 +560,40 @@ class FHIRResourceProcessor:
         resource_name_plural = resource_type.lower() + 's'
         name_field = resource_type.lower() + '_name'
         
-        if not resource_data or resource_name_plural not in resource_data or not resource_data[resource_name_plural]:
+        if not resource_data:
+            logger.warning(f"No resource data provided for {resource_type} visualization")
+            return {}
+            
+        if resource_name_plural not in resource_data:
+            logger.warning(f"'{resource_name_plural}' key not found in resource data. Available keys: {list(resource_data.keys())}")
+            return {}
+            
+        if not resource_data[resource_name_plural]:
+            logger.warning(f"Empty {resource_name_plural} list in resource data")
             return {}
         
         # Create age bracket-specific data structures
         age_bracket_data = {}
         resources = resource_data[resource_name_plural]
         
+        # Debug log
+        logger.info(f"Processing {len(resources)} {resource_name_plural} for age bracket visualization")
+        
+        # Track statistics for debugging
+        total_resources = len(resources)
+        resources_with_patients = 0
+        resources_with_age_data = 0
+        total_patients = 0
+        patients_with_age = 0
+        
         # Process each resource and organize by age bracket
         for resource in resources:
             if "patients" not in resource:
+                logger.debug(f"Resource {resource.get(name_field, 'unknown')} has no patients data")
                 continue
+                
+            resources_with_patients += 1
+            total_patients += len(resource["patients"])
                 
             # Extract resource name
             name = resource[name_field]
@@ -527,12 +602,19 @@ class FHIRResourceProcessor:
                 
             # Group patients by age bracket
             age_bracket_counts = {}
+            resource_has_age_data = False
+            
             for patient_detail in resource["patients"]:
                 # Extract age from patient detail string
                 age = self._extract_age_from_patient_detail(patient_detail)
                 if age is not None:
+                    patients_with_age += 1
+                    resource_has_age_data = True
                     age_bracket = self._get_age_bracket(age, bracket_size)
                     age_bracket_counts[age_bracket] = age_bracket_counts.get(age_bracket, 0) + 1
+            
+            if resource_has_age_data:
+                resources_with_age_data += 1
             
             # Add to age bracket-specific data
             for age_bracket, count in age_bracket_counts.items():
@@ -547,12 +629,30 @@ class FHIRResourceProcessor:
                     age_bracket_data[age_bracket]["names"].append(name)
                     age_bracket_data[age_bracket]["counts"].append(count)
         
+        # Log summary statistics
+        logger.info(f"Age bracket visualization stats for {resource_type}:")
+        logger.info(f"  Total resources: {total_resources}")
+        logger.info(f"  Resources with patients: {resources_with_patients}")
+        logger.info(f"  Resources with age data: {resources_with_age_data}")
+        logger.info(f"  Total patients: {total_patients}")
+        logger.info(f"  Patients with age data: {patients_with_age}")
+        logger.info(f"  Age brackets found: {list(age_bracket_data.keys())}")
+        
+        # If no age data was found, return empty result
+        if not age_bracket_data:
+            logger.warning(f"No age bracket data could be extracted for {resource_type}")
+            return {}
+        
         # Sort and limit data for each age bracket
         result = {}
         
         # Sort age brackets naturally
-        sorted_brackets = sorted(age_bracket_data.keys(), 
-                               key=lambda x: int(x.split('-')[0]) if x != "Unknown" else float('inf'))
+        try:
+            sorted_brackets = sorted(age_bracket_data.keys(), 
+                                   key=lambda x: int(x.split('-')[0]) if x != "Unknown" else float('inf'))
+        except Exception as e:
+            logger.error(f"Error sorting age brackets: {str(e)}. Using unsorted brackets.")
+            sorted_brackets = list(age_bracket_data.keys())
         
         for age_bracket in sorted_brackets:
             data = age_bracket_data[age_bracket]
@@ -596,8 +696,13 @@ class FHIRResourceProcessor:
                 plt.axis('off')
                 return self._get_image_response(plt)
             
-            # Create the visualization
-            plt.figure(figsize=(12, max(6, len(names) * 0.3)))  # Adjust height based on number of items
+            # Create the visualization with more space for labels
+            # Calculate figure width based on the longest label
+            max_label_len = max([len(name) for name in names]) if names else 0
+            fig_width = max(12, 8 + (max_label_len * 0.1))  # Base width + additional width for long labels
+            fig_height = max(6, len(names) * 0.4)  # Adjust height based on number of items
+            
+            plt.figure(figsize=(fig_width, fig_height))
             
             # Create horizontal bar chart
             y_pos = np.arange(len(names))
@@ -605,6 +710,9 @@ class FHIRResourceProcessor:
             plt.yticks(y_pos, names)
             plt.xlabel('Number of Occurrences')
             plt.title(f'Most Common {resource_type} Types')
+            
+            # Adjust layout to ensure labels are visible
+            plt.subplots_adjust(left=0.3)  # Increase left margin for labels
             plt.tight_layout()
             
             # Add count labels to the bars
@@ -636,8 +744,18 @@ class FHIRResourceProcessor:
             resource_data = await self.process_fhir_resources(
                 resource_type, 
                 include_patients=True,
-                include_patient_details=True
+                include_patient_details=True,
+                cohort_id=cohort_id
             )
+            
+            # Debug logging
+            logger.info(f"Visualizing {resource_type} by age bracket with cohort_id={cohort_id}")
+            logger.info(f"Resource data keys: {resource_data.keys() if resource_data else 'None'}")
+            resource_name_plural = resource_type.lower() + 's'
+            if resource_name_plural in resource_data:
+                logger.info(f"Found {len(resource_data[resource_name_plural])} {resource_name_plural}")
+            else:
+                logger.info(f"No {resource_name_plural} found in resource data")
             
             # Prepare data for visualization by gender
             gender_data = self._prepare_gender_visualization_data(resource_data, resource_type, limit)
@@ -645,12 +763,21 @@ class FHIRResourceProcessor:
             if not gender_data:
                 return Response(content="No data available for visualization", media_type="text/plain")
             
-            # Set up the figure based on number of genders
+            # Set up the figure based on number of genders and longest label
             num_genders = len(gender_data)
+            
+            # Calculate maximum label length across all genders
+            max_label_len = 0
+            for gender, (names, _) in gender_data.items():
+                if names:
+                    max_label_len = max(max_label_len, max([len(name) for name in names]))
+            
+            # Calculate figure dimensions
+            fig_width = max(12, 8 + (max_label_len * 0.1))  # Base width + additional width for long labels
             fig_height = max(4, 2 + num_genders * 0.5)  # Base height + additional height per gender
             
             # Create figure with subplots - one row per gender
-            fig, axes = plt.subplots(num_genders, 1, figsize=(10, fig_height * num_genders), squeeze=False)
+            fig, axes = plt.subplots(num_genders, 1, figsize=(fig_width, fig_height * num_genders), squeeze=False)
             
             # Color mapping for genders
             color_map = {
@@ -677,6 +804,9 @@ class FHIRResourceProcessor:
                 ax.invert_yaxis()  # Labels read top-to-bottom
                 ax.set_xlabel('Number of Occurrences')
                 ax.set_title(f'Most Common {resource_type} Types - {gender.capitalize()}')
+                
+                # Adjust subplot to ensure labels are visible
+                ax.figure.subplots_adjust(left=0.3)  # Increase left margin for labels
                 
                 # Add count labels to bars
                 for j, v in enumerate(counts):
@@ -717,23 +847,60 @@ class FHIRResourceProcessor:
             resource_data = await self.process_fhir_resources(
                 resource_type, 
                 include_patients=True,
-                include_patient_details=True
+                include_patient_details=True,
+                cohort_id=cohort_id
             )
+            
+            # Debug logging
+            logger.info(f"Visualizing {resource_type} by age bracket with cohort_id={cohort_id}")
+            logger.info(f"Resource data keys: {resource_data.keys() if resource_data else 'None'}")
+            resource_name_plural = resource_type.lower() + 's'
+            if resource_name_plural in resource_data:
+                logger.info(f"Found {len(resource_data[resource_name_plural])} {resource_name_plural}")
+            else:
+                logger.info(f"No {resource_name_plural} found in resource data")
             
             # Prepare data for visualization by age bracket
-            age_bracket_data = self._prepare_age_bracket_visualization_data(
-                resource_data, resource_type, limit, bracket_size
-            )
+            try:
+                age_bracket_data = self._prepare_age_bracket_visualization_data(
+                    resource_data, resource_type, limit, bracket_size
+                )
+                
+                # Debug logging for age bracket data
+                logger.info(f"Age bracket data: {list(age_bracket_data.keys()) if age_bracket_data else 'Empty'}")
+                
+                if not age_bracket_data:
+                    logger.warning(f"No age bracket data found for {resource_type} with cohort_id={cohort_id}")
+                    # Create a simple text image instead of returning an error
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    ax.text(0.5, 0.5, f"No age data available for {resource_type}", 
+                            horizontalalignment='center', verticalalignment='center', fontsize=14)
+                    ax.axis('off')
+                    return self._get_image_response(plt)
+            except Exception as e:
+                logger.error(f"Error preparing age bracket data: {str(e)}", exc_info=True)
+                # Create a simple error image
+                fig, ax = plt.subplots(figsize=(10, 6))
+                ax.text(0.5, 0.5, f"Error preparing visualization: {str(e)}", 
+                        horizontalalignment='center', verticalalignment='center', fontsize=14)
+                ax.axis('off')
+                return self._get_image_response(plt)
             
-            if not age_bracket_data:
-                return Response(content="No age data available for visualization", media_type="text/plain")
-            
-            # Set up the figure based on number of age brackets
+            # Set up the figure based on number of age brackets and longest label
             num_brackets = len(age_bracket_data)
+            
+            # Calculate maximum label length across all age brackets
+            max_label_len = 0
+            for age_bracket, (names, _) in age_bracket_data.items():
+                if names:
+                    max_label_len = max(max_label_len, max([len(name) for name in names]))
+            
+            # Calculate figure dimensions
+            fig_width = max(12, 8 + (max_label_len * 0.1))  # Base width + additional width for long labels
             fig_height = max(4, 2 + num_brackets * 0.5)  # Base height + additional height per bracket
             
             # Create figure with subplots - one row per age bracket
-            fig, axes = plt.subplots(num_brackets, 1, figsize=(10, fig_height * num_brackets), squeeze=False)
+            fig, axes = plt.subplots(num_brackets, 1, figsize=(fig_width, fig_height * num_brackets), squeeze=False)
             
             # Generate a color gradient for age brackets
             colors = plt.cm.viridis(np.linspace(0, 0.8, num_brackets))
@@ -752,6 +919,9 @@ class FHIRResourceProcessor:
                 ax.invert_yaxis()  # Labels read top-to-bottom
                 ax.set_xlabel('Number of Occurrences')
                 ax.set_title(f'Most Common {resource_type} Types - Age {age_bracket} years')
+                
+                # Adjust subplot to ensure labels are visible
+                ax.figure.subplots_adjust(left=0.3)  # Increase left margin for labels
                 
                 # Add count labels to bars
                 for j, v in enumerate(counts):
