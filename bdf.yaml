@@ -1,0 +1,6 @@
+# tool.yaml - BDF Knowledgebase Tool Metadata
+name: CHARMTwinsight
+version: "0.1.0"
+description: "Health data storage, predictive analytics, and synthetic data generation platform"
+url: "https://github.com/CHARM-BDF/CHARMTwinsights"
+license: MIT
