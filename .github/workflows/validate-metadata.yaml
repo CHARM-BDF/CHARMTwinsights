@@ -1,0 +1,14 @@
+name: Validate BDF Metadata
+
+on:
+  push:
+    branches: [ vandv, main-dev, main ]
+  pull_request:
+    branches: [ vandv, main-dev, main ]
+
+jobs:
+  validate-tool:
+    # This USES their workflow definition but RUNS in your repo
+    uses: ARPA-H-BDF/bdfkb-schema/.github/workflows/ci-validate.yaml@main
+    with:
+      python-version: '3.9'
