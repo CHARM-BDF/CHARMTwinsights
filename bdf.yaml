@@ -1,6 +1,543 @@
-# tool.yaml - BDF Knowledgebase Tool Metadata
-name: CHARMTwinsight
-version: "0.1.0"
-description: "Health data storage, predictive analytics, and synthetic data generation platform"
-url: "https://github.com/CHARM-BDF/CHARMTwinsights"
-license: MIT
+# bdf.yaml - BDF Knowledgebase Metadata for CHARMTwinsight
+# This file describes your tool for the ARPA-H BDF toolbox directory
+
+# ==============================================================================
+# VERSION
+# ==============================================================================
+# Semantic version of your tool (v + major.minor.patch format)
+# Examples: v0.1.0, v1.2.3, v2.0.0-beta
+version: v0.1.0
+
+# ==============================================================================
+# TOOL INFORMATION
+# ==============================================================================
+tool:
+  # Human-readable name of your tool
+  name: CHARMTwinsight
+  
+  # URL to the source code repository
+  repo_url: https://github.com/CHARM-BDF/CHARMTwinsights
+  
+  # URL to the tool's main homepage (can be same as repo_url or a dedicated site)
+  tool_homepage: https://github.com/CHARM-BDF/CHARMTwinsights
+  
+  # URL to main documentation (README, docs site, wiki, etc.)
+  documentation_url: https://github.com/CHARM-BDF/CHARMTwinsights/blob/main/README.md
+  
+  # Type of tool - REQUIRED, must be one of:
+  # - CLI: Command-line interface tool
+  # - DatabasePortal: Web interface to query/browse a database
+  # - DesktopApp: Desktop application
+  # - Library: Software library/package
+  # - Ontology: Ontology or vocabulary
+  # - Plugin: Plugin for another tool
+  # - Script: Single script or small collection
+  # - SPARQLEndpoint: SPARQL query endpoint
+  # - Suite: Collection of tools working together (YOUR CASE - microservices)
+  # - WebApp: Web-based application
+  # - WebAPI: Web API/service
+  # - WebServiceSOAP: SOAP-based web service
+  # - Workbench: Integrated development/analysis workbench
+  # - Workflow: Workflow/pipeline tool
+  # - Notebook: Jupyter notebook or similar
+  # - AI/MLModel: AI or machine learning model
+  # - KnowledgeGraph: Knowledge graph system
+  # - DataCatalog: Data catalog/registry
+  tool_type: Suite
+
+# ==============================================================================
+# LARGE LANGUAGE MODEL (LLM) USAGE
+# ==============================================================================
+llm:
+  # Does your tool use LLMs? (true/false)
+  usesLlm: false
+  
+  # Which LLM providers are supported? (empty list if usesLlm: false)
+  # Options include: openai, anthropic, cohere, google, huggingface, ollama, etc.
+  modelsSupported: []
+  
+  # Which LLM providers are required? (empty list if usesLlm: false)
+  modelsRequired: []
+  
+  # Can users bring their own API keys? (true/false)
+  # If false, keys are provided by the tool
+  bringOwnKey: false
+
+# ==============================================================================
+# INPUT DATA SOURCES
+# ==============================================================================
+# List all types of data your tool accepts as input
+# Each input should describe one data type/format combination
+input:
+  # INPUT 1: Demographics for synthetic data generation
+  - name: Patient Demographics for Synthea FHIR Generation
+    
+    # Data category - must be one of:
+    # - clinical: Clinical/medical data
+    # - omics-molecular: Molecular omics (genomics, proteomics, etc.)
+    # - omics-imaging: Medical imaging
+    # - environmental: Environmental data
+    # - behavioral: Behavioral/lifestyle data
+    # - socioeconomic: Social determinants of health
+    # - knowledge graph: Structured knowledge
+    # - literature: Scientific literature
+    # - synthetic: Synthetic/simulated data
+    # - other: Use string to specify if none fit
+    dataCategory: demographics
+    
+    # Data class - must be one of:
+    # - structured: Structured/tabular data
+    # - unstructured-text: Free text
+    # - unstructured-image: Images
+    # - time-series: Time-series data
+    # - graph-or-network: Network/graph data
+    # - spatial: Spatial/geographic data
+    dataClass: structured
+    
+    # Specific data type - can be from enum or custom string:
+    # Common options: Demographics, Electronic Health Records, Clinical Features,
+    # Genomic Sequences, Medical Images, Publications, Drug Information, etc.
+    # Or use custom string if none fit
+    dataType: Demographics
+    
+    # File formats accepted (list)
+    # Common: json, csv, xml, txt, pdf, png, jpg, parquet, feather, etc.
+    format:
+      - json
+    
+    # Data standards used (list) - can be from enum or custom string:
+    # Common standards: FHIR, HL7, DICOM, OMOP, i2b2, LOINC, SNOMED-CT, ICD-10, etc.
+    # Use "unknown" if no standard, or custom string
+    dataStandard:
+      - unknown
+    
+    # Is this proprietary/restricted data? (true/false)
+    proprietary: false
+    
+    # Where does this data come from? (free text)
+    source: User-provided generation parameters (demographics, cohort settings, temporal scope)
+  
+  
+  # INPUT 2: Predictive model registration data
+  - name: Model Registration Metadata
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Model Metadata
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: User-provided model container images and metadata
+  
+  # INPUT 4: Features for predictive models
+  - name: Model Input Features
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Clinical Features
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: User-provided feature vectors matching model input specifications
+  
+
+
+# ==============================================================================
+# OUTPUT DATA PRODUCTS
+# ==============================================================================
+# List all types of data your tool produces as output
+output:
+  # OUTPUT 1: Synthetic FHIR patient data
+  - name: Synthetic FHIR Patient Data
+    
+    # Data category - must be one of:
+    # - clinical: Clinical/medical data
+    # - omics-molecular: Molecular omics (genomics, proteomics, etc.)
+    # - omics-imaging: Medical imaging
+    # - environmental: Environmental data
+    # - behavioral: Behavioral/lifestyle data
+    # - socioeconomic: Social determinants of health
+    # - knowledge graph: Structured knowledge
+    # - literature: Scientific literature
+    # - synthetic: Synthetic/simulated data
+    # - other: Use string to specify if none fit
+    dataCategory: clinical
+    
+    # Data class - must be one of:
+    # - structured: Structured/tabular data
+    # - unstructured-text: Free text
+    # - unstructured-image: Images
+    # - time-series: Time-series data
+    # - graph-or-network: Network/graph data
+    # - spatial: Spatial/geographic data
+    dataClass: structured
+    
+    # Specific data type - can be from enum or custom string:
+    # Common options: Demographics, Electronic Health Records, Clinical Features,
+    # Genomic Sequences, Medical Images, Publications, Drug Information, etc.
+    # Or use custom string if none fit
+    dataType: Electronic Health Records (FHIR)
+    
+    # File formats accepted (list)
+    # Common: json, csv, xml, txt, pdf, png, jpg, parquet, feather, etc.
+    format:
+      - json
+    
+    # Data standards used (list) - can be from enum or custom string:
+    # Common standards: FHIR, HL7, DICOM, OMOP, i2b2, LOINC, SNOMED-CT, ICD-10, etc.
+    # Use "unknown" if no standard, or custom string
+    dataStandard:
+      - FHIR
+    
+    # Is this proprietary/restricted data? (true/false)
+    proprietary: false
+    
+    # Where does this data come from? (free text)
+    source: Generated via Synthea engine with configurable demographics
+
+  # OUTPUT 2: Generation job status and metadata
+  - name: Patient Generation Job Status
+    dataCategory: job-status
+    dataClass: structured
+    dataType: Job Metadata
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: Asynchronous job tracking system for synthetic patient generation
+
+  # OUTPUT 3: FHIR patient query results
+  - name: Patient FHIR Resource Collections
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Electronic Health Records
+    format:
+      - json
+    dataStandard:
+      - FHIR
+    proprietary: false
+    source: HAPI FHIR server queries (patients, cohorts, and related resources)
+
+  # OUTPUT 4: Predictive model outputs
+  - name: Hosted Model Outputs
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Risk Scores
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: Registered containerized predictive models (e.g., Cox PH COPD model)
+
+  # OUTPUT 5: Statistical visualizations
+  - name: Clinical Data Visualizations
+    dataCategory: clinical
+    dataClass: unstructured-image
+    dataType: Statistical Graphics
+    format:
+      - png
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: Python-based visualization endpoints for observations, conditions, procedures, medications, and diagnostics
+
+# ==============================================================================
+# COLLABORATIONS
+# ==============================================================================
+# List any other BDF tools this tool integrates with or depends on
+# Leave as empty list [] if no direct collaborations
+collaborations:
+  - tool_name: FHIR-HOSE
+    integration_type: data_exchange
+    description: FHIR-HOSE has the ability to call TWINSight-hosted predictive models and retrieve results
+# Example if you had collaborations:
+# - tool_name: SomeOtherBDFTool
+#   integration_type: data_exchange
+#   description: Exchanges FHIR data with SomeOtherBDFTool
+
+# ==============================================================================
+# DOMAINS
+# ==============================================================================
+# Application domains or use cases (list of strings)
+# Be specific about what problems/domains your tool addresses
+domains:
+  - Synthetic Data Generation (FHIR)
+  - Synthetic Data Storage (FHIR)
+  - Clinical Predictive Analytics
+  - Framework-agnostic model hosting
+
+# ==============================================================================
+# CREDIT / CONTRIBUTORS
+# ==============================================================================
+# List people/organizations who should receive credit
+# At least one entry required
+credit:
+  - name: "Shawn O'Neil"  # UPDATE WITH ACTUAL NAMES/TEAM
+    # Role - must be one of:
+    # - Developer: Wrote the code
+    # - Maintainer: Maintains the project
+    # - Provider: Provides the service/hosting
+    # - Documentor: Wrote documentation
+    # - Contributor: Contributed to the project
+    # - Support: Provides user support
+    # - PrimaryContact: Main point of contact
+    role: Developer
+    org: University of North Carolina at Chapel Hill  # UPDATE AS NEEDED
+    url: https://www.med.unc.edu/genetics/directory/shawn-oneil-phd/
+  
+  - name: Chang Sun 
+    role: Developer
+    org: Maastricht University
+    url: https://www.maastrichtuniversity.nl/c-sun
+
+  - name: Anas Elghafari
+    role: Developer
+    org: Maastricht University
+    url: https://cris.maastrichtuniversity.nl/en/persons/anas-elghafari/
+
+  - name: Michele Esposito
+    role: Developer
+    org: Maastricht University
+    url: https://www.maastrichtuniversity.nl/m-esposito
+
+  - name: Michel Dumontier
+    role: Support
+    org: Maastricht University
+    url: https://www.maastrichtuniversity.nl/m-esposito
+
+# ==============================================================================
+# MATURITY LEVEL
+# ==============================================================================
+# Technology Readiness Level (1-9 scale based on NASA TRL)
+# 1: Basic principles observed and reported
+# 2: Technology concept and/or application formulated
+# 3: Analytical and experimental critical function/proof of concept
+# 4: Component and/or breadboard validation in lab
+# 5: Component validation in relevant environment
+# 6: System/subsystem model demonstration in relevant environment
+# 7: System prototype demonstration in operational environment
+# 8: Actual system completed and qualified through test and demonstration
+# 9: Actual system proven through successful operations
+maturity:
+  beginning_maturity: 3  # UPDATE: Where did you start?
+  current_maturity: 6    # UPDATE: Where are you now?
+
+# ==============================================================================
+# LICENSE
+# ==============================================================================
+# Software license information
+license:
+  # License type - must be one of the SPDX license identifiers:
+  # Common open source: MIT, Apache-2.0, GPL-3.0, BSD-3-Clause, GPL-2.0, LGPL-3.0
+  # Creative Commons: CC-BY-4.0, CC-BY-SA-4.0, CC0-1.0
+  # Special: Proprietary, Other, "Not licensed", Freeware
+  # See full list: https://spdx.org/licenses/
+  # 
+  # ⚠️ ACTION REQUIRED: Add a LICENSE file to your repo!
+  license_type: Not licensed  # CHANGE THIS after adding LICENSE file
+  
+  # URL to the license file or license info page
+  link: https://github.com/CHARM-BDF/CHARMTwinsights  # UPDATE to LICENSE file URL
+
+# ==============================================================================
+# TARGET USERS
+# ==============================================================================
+# Who is this tool designed for?
+target_users:
+  # Primary user type - REQUIRED
+  primary_user:
+    # User type - must be one of:
+    # - patient: Patients/consumers
+    # - clinician: Healthcare providers
+    # - researcher: Researchers/scientists
+    # - site-admin-prepping-ehr-extracts: IT staff preparing data
+    # - data-manager: Data management professionals
+    # - data-curator: Data curation specialists
+    user_type: researcher
+    
+    # Technical literacy required (list) - must be from:
+    # - novice: Little to no technical background
+    # - intermediate: Some technical skills (basic coding, tools usage)
+    # - advanced: Strong technical skills
+    # - expert: Deep technical expertise
+    technical_literacy_level:
+      - intermediate
+      - advanced
+    
+    # Biomedical literacy required (list) - same options as technical
+    biomedical_literacy_level:
+      - intermediate
+      - advanced
+
+# ==============================================================================
+# MEDIA
+# ==============================================================================
+# Links to screenshots, videos, diagrams, etc. (optional)
+media:
+  - url: https://raw.githubusercontent.com/CHARM-BDF/CHARMTwinsights/main/app/arch.png
+    # Type: image, video, diagram, screenshot, etc. (free text)
+    type: image
+    description: CHARMTwinsight Architecture Diagram
+
+# ==============================================================================
+# QUERY LANGUAGE / API TYPE (optional but recommended for web services)
+# ==============================================================================
+query_language:
+  # Query type - must be one of:
+  # - REST: RESTful HTTP APIs
+  # - GraphQL: GraphQL query language
+  # - gRPC: gRPC protocol
+  # - SOAP: SOAP web services
+  # - OData: OData protocol
+  # - JSON-RPC: JSON-RPC protocol
+  # - XML-RPC: XML-RPC protocol
+  # - Falcor: Netflix Falcor
+  type: REST
+  
+  # Free-text description
+  description: FastAPI-based REST endpoints for all services
+
+# ==============================================================================
+# CONTAINER INFORMATION (optional)
+# ==============================================================================
+container:
+  # Container type - must be one of:
+  # - Docker: Docker containers (YOUR CASE)
+  # - Podman: Podman containers
+  # - containerd/nerdctl: containerd with nerdctl
+  # - LXC: Linux Containers
+  # - runc: runc runtime
+  # - Rancher Desktop: Rancher Desktop
+  # - Kubernetes: Kubernetes orchestration
+  # - Red Had OpenShift: OpenShift platform
+  # - Hyper-V COntainers: Hyper-V containers
+  # - Buildah: Buildah build tool
+  # - OrbStack: OrbStack (Mac)
+  # - PaaS: Platform-as-a-Service
+  type: Docker
+  
+  # URL to container registry (Docker Hub, ghcr.io, etc.)
+  # Use descriptive text if locally built
+  registry_url: Local Docker registry with docker-compose
+  
+  # URL to container/deployment documentation
+  documentation_url: https://github.com/CHARM-BDF/CHARMTwinsights/blob/main/README.md
+
+# ==============================================================================
+# API INFORMATION (optional but valuable for web services)
+# ==============================================================================
+api:
+  # Base URL where API is hosted (or example URL)
+  base_url: http://localhost:8000
+  
+  # URL to API documentation (Swagger, OpenAPI, etc.)
+  documentation_url: http://localhost:8000/docs
+  
+  # List of key endpoints (you can add more detail here)
+  endpoints:
+    # === Synthetic Data Generation Endpoints ===
+    - path: /synthetic/synthea/synthetic-patients
+      # HTTP method - must be one of: GET, POST, PUT, PATCH, DELETE
+      method: POST
+      description: Create a new asynchronous synthetic patient generation job with configurable parameters (cohort size, demographics, temporal scope)
+      # You can add more fields: parameters, request_body, response, etc.
+    
+    - path: /synthetic/synthea/synthetic-patients/jobs
+      method: GET
+      description: List all synthetic patient generation jobs and their statuses
+    
+    - path: /synthetic/synthea/synthetic-patients/jobs/{job_id}
+      method: GET
+      description: Get the status and details of a specific generation job
+    
+    - path: /synthetic/synthea/synthetic-patients/jobs/{job_id}
+      method: DELETE
+      description: Cancel a running synthetic patient generation job
+    
+    - path: /synthetic/synthea/list-all-patients
+      method: GET
+      description: Get a list of all patients with their cohort IDs, date of birth, and display fields from the HAPI FHIR server
+    
+    - path: /synthetic/synthea/list-all-cohorts
+      method: GET
+      description: Get a list of all cohorts with their patient counts and sources from the HAPI FHIR server
+    
+    # === Modeling Endpoints ===
+    - path: /modeling/models
+      method: GET
+      description: List all registered predictive models with core metadata
+    
+    - path: /modeling/models
+      method: POST
+      description: Register a new containerized predictive model with the model server
+    
+    - path: /modeling/predict
+      method: POST
+      description: Make a prediction using a registered model with provided input features
+    
+    - path: /modeling/models/{image_tag}
+      method: GET
+      description: Get detailed information about a specific registered model including input schema and examples
+    
+    # === Patient Statistics Endpoints ===
+    - path: /stats/patients
+      method: GET
+      description: Search and retrieve patient FHIR resources with optional filters (name, gender, birthdate)
+    
+    - path: /stats/patients/{patient_id}
+      method: GET
+      description: Retrieve a specific patient FHIR resource by ID
+    
+    - path: /stats/patients/{patient_id}/$everything
+      method: GET
+      description: Retrieve all FHIR resources related to a patient (FHIR $everything operation) with optional date and resource type filters
+    
+    # === Statistical Visualization Endpoints ===
+    - path: /stats/visualize-observations
+      method: GET
+      description: Generate a bar chart visualization (PNG) of the most common observation types with optional cohort filtering
+    
+    - path: /stats/visualize-conditions
+      method: GET
+      description: Generate a bar chart visualization (PNG) of the most common condition types with optional cohort filtering
+    
+    - path: /stats/visualize-procedures
+      method: GET
+      description: Generate a bar chart visualization (PNG) of the most common procedure types with optional cohort filtering
+    
+    - path: /stats/visualize-medications
+      method: GET
+      description: Generate a bar chart visualization (PNG) of the most common medications with optional cohort filtering
+    
+    - path: /stats/visualize-diagnostics
+      method: GET
+      description: Generate a bar chart visualization (PNG) of the most common diagnostic report types with optional cohort filtering
+
+# ==============================================================================
+# OPTIONAL FIELDS NOT INCLUDED ABOVE
+# ==============================================================================
+# 
+# cloud: # Cloud platform usage information
+#   providers: []  # AWS, Azure, GCP, etc.
+#   services: []   # Specific services used
+#   cost_model: free / pay-as-you-go / subscription
+#
+# funding: # Grant/funding information
+#   - agency: ARPA-H
+#     grant_id: "12345"
+#     program: "BDF"
+#
+# publication: # Related publications (list)
+#   - title: "Paper Title"
+#     doi: "10.1234/example"
+#     url: "https://..."
+#     authors: ["Author 1", "Author 2"]
+#
+# mcp: # Model Context Protocol support
+#   supportsMCP: true/false
+#   serverUrl: "..."
+#   capabilities: []
