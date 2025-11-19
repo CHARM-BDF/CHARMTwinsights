@@ -33,7 +33,7 @@ tool:
   # - Plugin: Plugin for another tool
   # - Script: Single script or small collection
   # - SPARQLEndpoint: SPARQL query endpoint
-  # - Suite: Collection of tools working together (YOUR CASE - microservices)
+  # - Suite: Collection of tools working together
   # - WebApp: Web-based application
   # - WebAPI: Web API/service
   # - WebServiceSOAP: SOAP-based web service
@@ -71,50 +71,19 @@ llm:
 input:
   # INPUT 1: Demographics for synthetic data generation
   - name: Patient Demographics for Synthea FHIR Generation
-    
-    # Data category - must be one of:
-    # - clinical: Clinical/medical data
-    # - omics-molecular: Molecular omics (genomics, proteomics, etc.)
-    # - omics-imaging: Medical imaging
-    # - environmental: Environmental data
-    # - behavioral: Behavioral/lifestyle data
-    # - socioeconomic: Social determinants of health
-    # - knowledge graph: Structured knowledge
-    # - literature: Scientific literature
-    # - synthetic: Synthetic/simulated data
-    # - other: Use string to specify if none fit
     dataCategory: demographics
-    
-    # Data class - must be one of:
-    # - structured: Structured/tabular data
-    # - unstructured-text: Free text
-    # - unstructured-image: Images
-    # - time-series: Time-series data
-    # - graph-or-network: Network/graph data
-    # - spatial: Spatial/geographic data
     dataClass: structured
     
-    # Specific data type - can be from enum or custom string:
-    # Common options: Demographics, Electronic Health Records, Clinical Features,
-    # Genomic Sequences, Medical Images, Publications, Drug Information, etc.
-    # Or use custom string if none fit
     dataType: Demographics
     
-    # File formats accepted (list)
-    # Common: json, csv, xml, txt, pdf, png, jpg, parquet, feather, etc.
     format:
       - json
     
-    # Data standards used (list) - can be from enum or custom string:
-    # Common standards: FHIR, HL7, DICOM, OMOP, i2b2, LOINC, SNOMED-CT, ICD-10, etc.
-    # Use "unknown" if no standard, or custom string
     dataStandard:
       - unknown
     
-    # Is this proprietary/restricted data? (true/false)
     proprietary: false
     
-    # Where does this data come from? (free text)
     source: User-provided generation parameters (demographics, cohort settings, temporal scope)
   
   
@@ -151,50 +120,16 @@ input:
 output:
   # OUTPUT 1: Synthetic FHIR patient data
   - name: Synthetic FHIR Patient Data
-    
-    # Data category - must be one of:
-    # - clinical: Clinical/medical data
-    # - omics-molecular: Molecular omics (genomics, proteomics, etc.)
-    # - omics-imaging: Medical imaging
-    # - environmental: Environmental data
-    # - behavioral: Behavioral/lifestyle data
-    # - socioeconomic: Social determinants of health
-    # - knowledge graph: Structured knowledge
-    # - literature: Scientific literature
-    # - synthetic: Synthetic/simulated data
-    # - other: Use string to specify if none fit
-    dataCategory: clinical
-    
-    # Data class - must be one of:
-    # - structured: Structured/tabular data
-    # - unstructured-text: Free text
-    # - unstructured-image: Images
-    # - time-series: Time-series data
-    # - graph-or-network: Network/graph data
-    # - spatial: Spatial/geographic data
+    dataCategory: clinical    
     dataClass: structured
-    
-    # Specific data type - can be from enum or custom string:
-    # Common options: Demographics, Electronic Health Records, Clinical Features,
-    # Genomic Sequences, Medical Images, Publications, Drug Information, etc.
-    # Or use custom string if none fit
     dataType: Electronic Health Records (FHIR)
-    
-    # File formats accepted (list)
-    # Common: json, csv, xml, txt, pdf, png, jpg, parquet, feather, etc.
     format:
       - json
-    
-    # Data standards used (list) - can be from enum or custom string:
-    # Common standards: FHIR, HL7, DICOM, OMOP, i2b2, LOINC, SNOMED-CT, ICD-10, etc.
-    # Use "unknown" if no standard, or custom string
     dataStandard:
       - FHIR
     
-    # Is this proprietary/restricted data? (true/false)
     proprietary: false
     
-    # Where does this data come from? (free text)
     source: Generated via Synthea engine with configurable demographics
 
   # OUTPUT 2: Generation job status and metadata
@@ -236,10 +171,10 @@ output:
   # OUTPUT 5: Statistical visualizations
   - name: Clinical Data Visualizations
     dataCategory: clinical
-    dataClass: unstructured-image
+    dataClass: image
     dataType: Statistical Graphics
     format:
-      - png
+      - images
     dataStandard:
       - unknown
     proprietary: false
@@ -251,13 +186,10 @@ output:
 # List any other BDF tools this tool integrates with or depends on
 # Leave as empty list [] if no direct collaborations
 collaborations:
-  - tool_name: FHIR-HOSE
-    integration_type: data_exchange
-    description: FHIR-HOSE has the ability to call TWINSight-hosted predictive models and retrieve results
-# Example if you had collaborations:
-# - tool_name: SomeOtherBDFTool
-#   integration_type: data_exchange
-#   description: Exchanges FHIR data with SomeOtherBDFTool
+  - name: FHIR-HOSE
+    tools: 
+      - FHIR-HOSE
+    collaboration_purpose: FHIR-HOSE has the ability to call TWINSight-hosted models and display results
 
 # ==============================================================================
 # DOMAINS
@@ -386,158 +318,4 @@ media:
 # ==============================================================================
 # QUERY LANGUAGE / API TYPE (optional but recommended for web services)
 # ==============================================================================
-query_language:
-  # Query type - must be one of:
-  # - REST: RESTful HTTP APIs
-  # - GraphQL: GraphQL query language
-  # - gRPC: gRPC protocol
-  # - SOAP: SOAP web services
-  # - OData: OData protocol
-  # - JSON-RPC: JSON-RPC protocol
-  # - XML-RPC: XML-RPC protocol
-  # - Falcor: Netflix Falcor
-  type: REST
-  
-  # Free-text description
-  description: FastAPI-based REST endpoints for all services
-
-# ==============================================================================
-# CONTAINER INFORMATION (optional)
-# ==============================================================================
-container:
-  # Container type - must be one of:
-  # - Docker: Docker containers (YOUR CASE)
-  # - Podman: Podman containers
-  # - containerd/nerdctl: containerd with nerdctl
-  # - LXC: Linux Containers
-  # - runc: runc runtime
-  # - Rancher Desktop: Rancher Desktop
-  # - Kubernetes: Kubernetes orchestration
-  # - Red Had OpenShift: OpenShift platform
-  # - Hyper-V COntainers: Hyper-V containers
-  # - Buildah: Buildah build tool
-  # - OrbStack: OrbStack (Mac)
-  # - PaaS: Platform-as-a-Service
-  type: Docker
-  
-  # URL to container registry (Docker Hub, ghcr.io, etc.)
-  # Use descriptive text if locally built
-  registry_url: Local Docker registry with docker-compose
-  
-  # URL to container/deployment documentation
-  documentation_url: https://github.com/CHARM-BDF/CHARMTwinsights/blob/main/README.md
-
-# ==============================================================================
-# API INFORMATION (optional but valuable for web services)
-# ==============================================================================
-api:
-  # Base URL where API is hosted (or example URL)
-  base_url: http://localhost:8000
-  
-  # URL to API documentation (Swagger, OpenAPI, etc.)
-  documentation_url: http://localhost:8000/docs
-  
-  # List of key endpoints (you can add more detail here)
-  endpoints:
-    # === Synthetic Data Generation Endpoints ===
-    - path: /synthetic/synthea/synthetic-patients
-      # HTTP method - must be one of: GET, POST, PUT, PATCH, DELETE
-      method: POST
-      description: Create a new asynchronous synthetic patient generation job with configurable parameters (cohort size, demographics, temporal scope)
-      # You can add more fields: parameters, request_body, response, etc.
-    
-    - path: /synthetic/synthea/synthetic-patients/jobs
-      method: GET
-      description: List all synthetic patient generation jobs and their statuses
-    
-    - path: /synthetic/synthea/synthetic-patients/jobs/{job_id}
-      method: GET
-      description: Get the status and details of a specific generation job
-    
-    - path: /synthetic/synthea/synthetic-patients/jobs/{job_id}
-      method: DELETE
-      description: Cancel a running synthetic patient generation job
-    
-    - path: /synthetic/synthea/list-all-patients
-      method: GET
-      description: Get a list of all patients with their cohort IDs, date of birth, and display fields from the HAPI FHIR server
-    
-    - path: /synthetic/synthea/list-all-cohorts
-      method: GET
-      description: Get a list of all cohorts with their patient counts and sources from the HAPI FHIR server
-    
-    # === Modeling Endpoints ===
-    - path: /modeling/models
-      method: GET
-      description: List all registered predictive models with core metadata
-    
-    - path: /modeling/models
-      method: POST
-      description: Register a new containerized predictive model with the model server
-    
-    - path: /modeling/predict
-      method: POST
-      description: Make a prediction using a registered model with provided input features
-    
-    - path: /modeling/models/{image_tag}
-      method: GET
-      description: Get detailed information about a specific registered model including input schema and examples
-    
-    # === Patient Statistics Endpoints ===
-    - path: /stats/patients
-      method: GET
-      description: Search and retrieve patient FHIR resources with optional filters (name, gender, birthdate)
-    
-    - path: /stats/patients/{patient_id}
-      method: GET
-      description: Retrieve a specific patient FHIR resource by ID
-    
-    - path: /stats/patients/{patient_id}/$everything
-      method: GET
-      description: Retrieve all FHIR resources related to a patient (FHIR $everything operation) with optional date and resource type filters
-    
-    # === Statistical Visualization Endpoints ===
-    - path: /stats/visualize-observations
-      method: GET
-      description: Generate a bar chart visualization (PNG) of the most common observation types with optional cohort filtering
-    
-    - path: /stats/visualize-conditions
-      method: GET
-      description: Generate a bar chart visualization (PNG) of the most common condition types with optional cohort filtering
-    
-    - path: /stats/visualize-procedures
-      method: GET
-      description: Generate a bar chart visualization (PNG) of the most common procedure types with optional cohort filtering
-    
-    - path: /stats/visualize-medications
-      method: GET
-      description: Generate a bar chart visualization (PNG) of the most common medications with optional cohort filtering
-    
-    - path: /stats/visualize-diagnostics
-      method: GET
-      description: Generate a bar chart visualization (PNG) of the most common diagnostic report types with optional cohort filtering
-
-# ==============================================================================
-# OPTIONAL FIELDS NOT INCLUDED ABOVE
-# ==============================================================================
-# 
-# cloud: # Cloud platform usage information
-#   providers: []  # AWS, Azure, GCP, etc.
-#   services: []   # Specific services used
-#   cost_model: free / pay-as-you-go / subscription
-#
-# funding: # Grant/funding information
-#   - agency: ARPA-H
-#     grant_id: "12345"
-#     program: "BDF"
-#
-# publication: # Related publications (list)
-#   - title: "Paper Title"
-#     doi: "10.1234/example"
-#     url: "https://..."
-#     authors: ["Author 1", "Author 2"]
-#
-# mcp: # Model Context Protocol support
-#   supportsMCP: true/false
-#   serverUrl: "..."
-#   capabilities: []
+query_language: REST
