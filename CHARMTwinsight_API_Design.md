@@ -9,7 +9,8 @@
 
 ## 1. Overview
 
-CHARMTwinsight is a multimodal digital twin repository for structured and unstructured healthcare data. This API is designed to serve as the primary interface to query, analyze, and manage synthetic and real patient data within the repository.
+CHARMTwinsight is a multimodal digital twin repository for structured and unstructured healthcare data.  
+This API is designed to serve as the primary interface to query, analyze, and manage synthetic and real patient data within the repository.
 
 It will support:
 
