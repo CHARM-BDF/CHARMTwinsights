@@ -190,6 +190,7 @@ collaborations:
     tools: 
       - FHIR-HOSE
     collaboration_purpose: FHIR-HOSE has the ability to call TWINSight-hosted models and display results
+    description: FHIR-HOSE has the ability to call TWINSight-hosted models and display results
 
 # ==============================================================================
 # DOMAINS
@@ -304,18 +305,3 @@ target_users:
     biomedical_literacy_level:
       - intermediate
       - advanced
-
-# ==============================================================================
-# MEDIA
-# ==============================================================================
-# Links to screenshots, videos, diagrams, etc. (optional)
-media:
-  - url: https://raw.githubusercontent.com/CHARM-BDF/CHARMTwinsights/main/app/arch.png
-    # Type: image, video, diagram, screenshot, etc. (free text)
-    type: image
-    description: CHARMTwinsight Architecture Diagram
-
-# ==============================================================================
-# QUERY LANGUAGE / API TYPE (optional but recommended for web services)
-# ==============================================================================
-query_language: REST
