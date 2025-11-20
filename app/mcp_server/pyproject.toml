@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "charm-mcp-server"
+version = "0.1.0"
+description = "MCP Server for CHARMTwinsight providing synthetic data generation, patient data access, and model execution"
+authors = ["CHARMTwinsight Team"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastmcp = "^2.0.0"
+requests = "^2.31.0"
+pydantic = "^2.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+

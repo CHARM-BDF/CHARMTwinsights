@@ -15,10 +15,11 @@
     - [5. Stopping and Cleaning Up](#5-stopping-and-cleaning-up)
 4. [Troubleshooting](#troubleshooting)
 5. [Model Development](#model-development)
-6. [Development](#development)
+6. [MCB Server](#mcp-server)
+7. [Development](#development)
     - [Recommendations](#recommendations)
     - [Iterating](#iterating)
-7. [Miscellaneous](#miscellaneous)
+8. [Miscellaneous](#miscellaneous)
 
 ## Overview
 
@@ -54,6 +55,8 @@ CHARMTwinsight is designed as a microservices architecture managed with `docker 
 **`model_server`**: REST API hosting and serving arbitrary ML and statistical models packaged as Docker containers. 
 
 **`model_server_db`**: MongoDB database for storing metadata on hosted models.
+
+**`mcp_server`**: Model Context Protocol (MCP) server for cohort generation, patient querying, and model access
 
 
 ## Installation and Usage
@@ -222,6 +225,33 @@ CHARMTwinsights provides templates and tools to help developers create new machi
 - **Working example:** [`model-templates/examples/simple-classifier/`](model-templates/examples/simple-classifier/)
 - **Dockerfile validator:** [`model-templates/validate-dockerfile.py`](model-templates/validate-dockerfile.py)
 
+## MCP Server
+
+CHARMTwinsights includes a Model Context Protocol (MCP) server that allows AI assistants to interact with the platform programmatically.
+
+Supported tools:
+
+- **Synthetic Data Generation**: Create patient cohorts, monitor job progress, manage cohorts
+- **Patient Data Access**: Search patients, retrieve patient records
+- **Predictive Models**: List models, view model documentation, execute predictions
+
+Example `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "charmtwinsight": {
+      "url": "http://localhost:8006",
+      "transport": {
+        "type": "sse"
+      }
+    }
+  }
+}
+```
+
+For more information see [`app/mcp_server/README.md`](app/mcp_server/README.md).
+
 ## Development
 
 ### Recommendations
@@ -242,6 +272,7 @@ For development purposes, each service is exposed to the localhost on independen
 - stat_server_r: localhost:8002
 - synthea_server: localhost:8003
 - model_server: localhost:8004
+- mcp_server: localhost:8006
 
 *The HAPI server in particular is useful for browsing FHIR data and testing ad-hoc queries.*
 
