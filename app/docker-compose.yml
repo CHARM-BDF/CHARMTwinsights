@@ -66,7 +66,7 @@ services:
 
   hapi:
     container_name: hapi
-    image: "hapiproject/hapi:latest"
+    image: "hapiproject/hapi:v8.2.0-2"
     configs:
       - source: hapi
         target: /app/config/application.yaml
