@@ -31,8 +31,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(synthea.router)
 app.include_router(modeling.router)
+app.include_router(synthea.router)
 app.include_router(stat_server_py.router)
 
 @app.get("/health")
