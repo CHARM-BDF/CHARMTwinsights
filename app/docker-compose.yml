@@ -66,7 +66,7 @@ services:
 
   hapi:
     container_name: hapi
-    image: "hapiproject/hapi:latest"
+    image: "hapiproject/hapi:v8.2.0-2"
     configs:
       - source: hapi
         target: /app/config/application.yaml
@@ -116,28 +116,6 @@ services:
   model_server_db:
     image: mongo:6
     restart: always
-
-
-  mcp_server:
-    build: ./mcp_server
-    depends_on:
-      synthea_server:
-        condition: service_healthy
-      stat_server_py:
-        condition: service_healthy
-      model_server:
-        condition: service_healthy
-    environment:
-      - SYNTHEA_SERVER_URL=http://synthea_server:8000
-      - STAT_SERVER_URL=http://stat_server_py:8000
-      - MODEL_SERVER_URL=http://model_server:8000
-      - HAPI_URL=http://hapi:8080/fhir
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
 
 
 configs:
