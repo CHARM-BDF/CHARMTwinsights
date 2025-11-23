@@ -1,10 +1,16 @@
 """
-CHARMTwinsight MCP Server
+CHARMTwinsight MCP Server - Patient Data & Predictive Modeling
 
-This MCP server provides tools for:
-- Synthetic patient data generation via Synthea
-- Patient data access from HAPI FHIR
+This MCP server provides tools for LLM-assisted predictive modeling on patient data:
+- Comprehensive patient data access from HAPI FHIR
+- Data exploration (understanding codes, units, and available observations)
 - Predictive model execution
+
+The primary use case is enabling an LLM to:
+1. Understand what data is available in the system
+2. Retrieve patient clinical data in structured formats
+3. Map FHIR data to model input requirements
+4. Execute predictive models on patient data
 
 All tools communicate with internal microservices in the CHARMTwinsight stack.
 """
@@ -15,241 +21,15 @@ from typing import Optional, List, Dict, Any
 from fastmcp import FastMCP
 
 # Create the MCP server
-mcp = FastMCP("CHARMTwinsight")
+mcp = FastMCP("CHARMTwinsight-Modeling")
 
 # Service URLs (internal Docker network)
-SYNTHEA_SERVER_URL = os.getenv("SYNTHEA_SERVER_URL", "http://synthea_server:8000")
 STAT_SERVER_URL = os.getenv("STAT_SERVER_URL", "http://stat_server_py:8000")
 MODEL_SERVER_URL = os.getenv("MODEL_SERVER_URL", "http://model_server:8000")
 
 # ============================================================================
-# SYNTHETIC DATA GENERATION TOOLS
+# PATIENT SEARCH & DEMOGRAPHICS
 # ============================================================================
-
-@mcp.tool()
-def create_synthetic_patients_job(
-    num_patients: int = 10,
-    num_years: int = 1,
-    cohort_id: str = "default",
-    min_age: int = 0,
-    max_age: int = 140,
-    gender: str = "both",
-    state: Optional[str] = None,
-    city: Optional[str] = None,
-    use_population_sampling: bool = True
-) -> Dict[str, Any]:
-    """
-    Create a job to generate synthetic patient data using Synthea.
-    
-    This creates an asynchronous job that generates synthetic patient FHIR data
-    and stores it in the HAPI FHIR server with the specified cohort_id.
-    
-    Args:
-        num_patients: Number of patients to generate (1-100000)
-        num_years: Years of medical history per patient (1-100)
-        cohort_id: Identifier for the patient cohort (valid FHIR ID: alphanumeric, hyphens, periods)
-        min_age: Minimum patient age (0-140)
-        max_age: Maximum patient age (0-140)
-        gender: Patient gender - "both", "male", or "female"
-        state: US state for patient generation (optional)
-        city: US city for patient generation (optional, requires state)
-        use_population_sampling: If no state specified, sample states by population
-        
-    Returns:
-        Job information including job_id, status, and status_url for tracking
-    """
-    url = f"{SYNTHEA_SERVER_URL}/synthetic-patients"
-    payload = {
-        "num_patients": num_patients,
-        "num_years": num_years,
-        "cohort_id": cohort_id,
-        "min_age": min_age,
-        "max_age": max_age,
-        "gender": gender,
-        "exporter": "fhir",
-        "use_population_sampling": use_population_sampling
-    }
-    
-    if state:
-        payload["state"] = state
-    if city:
-        payload["city"] = city
-        
-    response = requests.post(url, json=payload, timeout=30)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def get_synthetic_job_status(job_id: str) -> Dict[str, Any]:
-    """
-    Get the status of a synthetic patient generation job.
-    
-    Args:
-        job_id: The UUID of the job to check
-        
-    Returns:
-        Job status information including:
-        - status: queued, running, completed, failed, or cancelled
-        - progress: Percentage complete (0.0-1.0)
-        - current_phase: Current operation being performed
-        - total_chunks: Total number of generation chunks
-        - completed_chunks: Number of completed chunks
-        - estimated_remaining_seconds: Estimated time remaining
-        - result: Complete results if status is "completed"
-        - error: Error message if status is "failed"
-    """
-    url = f"{SYNTHEA_SERVER_URL}/synthetic-patients/jobs/{job_id}"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def list_synthetic_jobs(limit: int = 50) -> Dict[str, Any]:
-    """
-    List recent synthetic patient generation jobs.
-    
-    Args:
-        limit: Maximum number of recent jobs to return (default 50)
-        
-    Returns:
-        List of recent jobs with their status information
-    """
-    url = f"{SYNTHEA_SERVER_URL}/synthetic-patients/jobs?limit={limit}"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def cancel_synthetic_job(job_id: str) -> Dict[str, Any]:
-    """
-    Cancel a queued or running synthetic patient generation job.
-    
-    Args:
-        job_id: The UUID of the job to cancel
-        
-    Returns:
-        Confirmation message with the cancelled job status
-    """
-    url = f"{SYNTHEA_SERVER_URL}/synthetic-patients/jobs/{job_id}"
-    response = requests.delete(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def get_available_states() -> Dict[str, Any]:
-    """
-    Get list of available US states for synthetic patient generation.
-    
-    Returns:
-        List of state names and total count
-    """
-    url = f"{SYNTHEA_SERVER_URL}/demographics/states"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def get_cities_for_state(state: str) -> Dict[str, Any]:
-    """
-    Get list of available cities for a specific US state.
-    
-    Args:
-        state: Name of the US state
-        
-    Returns:
-        List of city names and total count for the specified state
-    """
-    url = f"{SYNTHEA_SERVER_URL}/demographics/cities/{state}"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def list_all_cohorts() -> Dict[str, Any]:
-    """
-    List all patient cohorts stored in the HAPI FHIR server.
-    
-    Returns:
-        List of cohorts with their IDs, patient counts, source, and creation time
-    """
-    url = f"{SYNTHEA_SERVER_URL}/list-all-cohorts"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def delete_cohort(cohort_id: str) -> Dict[str, Any]:
-    """
-    Delete a cohort and all its patients from the HAPI FHIR server.
-    
-    WARNING: This permanently deletes all patient data in the cohort!
-    
-    Args:
-        cohort_id: The ID of the cohort to delete
-        
-    Returns:
-        Confirmation with number of patients deleted
-    """
-    url = f"{SYNTHEA_SERVER_URL}/delete-cohort/{cohort_id}"
-    response = requests.delete(url, timeout=30)
-    response.raise_for_status()
-    return response.json()
-
-
-# ============================================================================
-# PATIENT DATA ACCESS TOOLS
-# ============================================================================
-
-@mcp.tool()
-def get_patient_by_id(patient_id: str) -> Dict[str, Any]:
-    """
-    Get detailed demographic information for a specific patient.
-    
-    Args:
-        patient_id: The FHIR Patient resource ID
-        
-    Returns:
-        Patient demographic data including name, gender, birth date, etc.
-    """
-    url = f"{STAT_SERVER_URL}/patients/{patient_id}"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-@mcp.tool()
-def get_patient_everything(patient_id: str) -> Dict[str, Any]:
-    """
-    Get complete clinical record for a patient including all related resources.
-    
-    This is equivalent to the FHIR $everything operation, returning the patient's
-    complete medical history including conditions, observations, procedures,
-    medications, encounters, and more.
-    
-    Args:
-        patient_id: The FHIR Patient resource ID
-        
-    Returns:
-        Complete patient data including:
-        - demographics: Basic patient information
-        - resources: All clinical resources organized by type (Condition, Observation, 
-          Procedure, MedicationRequest, Encounter, etc.)
-    """
-    # The stat_server_py doesn't have a direct $everything endpoint,
-    # but we can query the HAPI server directly
-    hapi_url = os.getenv("HAPI_URL", "http://hapi:8080/fhir")
-    url = f"{hapi_url}/Patient/{patient_id}/$everything"
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    return response.json()
-
 
 @mcp.tool()
 def search_patients(
@@ -261,6 +41,9 @@ def search_patients(
     """
     Search for patients matching specified criteria.
     
+    Use this to find patient IDs that can then be used with other tools
+    to retrieve detailed clinical data.
+    
     Args:
         name: Patient name to search for (partial match)
         gender: Patient gender ("male", "female", "other", "unknown")
@@ -268,7 +51,7 @@ def search_patients(
         count: Maximum number of results to return (default 10)
         
     Returns:
-        List of matching patients with their demographic information
+        List of matching patients with ID, name, gender, birth date, etc.
     """
     url = f"{STAT_SERVER_URL}/patients"
     params = {"_count": count}
@@ -286,25 +69,156 @@ def search_patients(
 
 
 @mcp.tool()
-def get_patient_conditions(patient_id: str) -> Dict[str, Any]:
+def get_patient_demographics(
+    patient_id: str,
+    as_markdown: bool = False
+) -> Dict[str, Any]:
     """
-    Get all medical conditions for a specific patient.
+    Get demographic information for a specific patient.
+    
+    This retrieves parsed patient demographics including:
+    - Name (family name, given name)
+    - Gender
+    - Birth date and calculated age
+    - Address (city, state, country, postal code)
+    - Ethnicity and race
+    - Language
+    - Marital status
     
     Args:
         patient_id: The FHIR Patient resource ID
+        as_markdown: If True, returns human-readable markdown format.
+                     If False (default), returns structured JSON.
         
     Returns:
-        List of conditions with codes, descriptions, and dates
+        Patient demographic data in requested format
     """
-    url = f"{STAT_SERVER_URL}/conditions"
-    params = {"patient": patient_id}
+    url = f"{STAT_SERVER_URL}/Patient/{patient_id}"
+    params = {"as_markdown": str(as_markdown).lower()}
     response = requests.get(url, params=params, timeout=10)
     response.raise_for_status()
+    
+    if as_markdown:
+        return {"markdown": response.text}
     return response.json()
 
 
 # ============================================================================
-# MODEL SERVER TOOLS
+# COMPREHENSIVE PATIENT DATA ACCESS
+# ============================================================================
+
+@mcp.tool()
+def get_patient_all_structured_data(
+    patient_id: str,
+    as_markdown: bool = False
+) -> Dict[str, Any]:
+    """
+    Get ALL structured clinical data for a patient in one call.
+    
+    This retrieves all structured resource types including:
+    - Patient demographics
+    - Conditions (diagnoses)
+    - Observations (lab values, vital signs, BMI, etc.)
+    - Procedures
+    - MedicationRequests
+    - MedicationAdministration
+    - Immunizations
+    - CarePlans
+    
+    This is the most comprehensive way to get patient data for model input preparation.
+    
+    Args:
+        patient_id: The FHIR Patient resource ID
+        as_markdown: If True, returns human-readable markdown tables (useful for quick review).
+                     If False (default), returns structured JSON for programmatic processing.
+        
+    Returns:
+        All structured clinical resources organized by type with parsed/cleaned data
+    """
+    url = f"{STAT_SERVER_URL}/Patient/{patient_id}/all-structured"
+    params = {"as_markdown_df": str(as_markdown).lower()}
+    response = requests.get(url, params=params, timeout=30)
+    response.raise_for_status()
+    
+    if as_markdown:
+        return {"markdown": response.text}
+    return response.json()
+
+
+@mcp.tool()
+def get_patient_narrative_data(
+    patient_id: str,
+    as_markdown: bool = False
+) -> Dict[str, Any]:
+    """
+    Get narrative/free-text clinical data for a patient.
+    
+    This retrieves:
+    - DiagnosticReports (lab reports, imaging reports with text descriptions)
+    - DocumentReferences (clinical notes, discharge summaries, etc.)
+    
+    Narrative data contains free-text descriptions that may provide additional
+    context not available in structured data.
+    
+    Args:
+        patient_id: The FHIR Patient resource ID
+        as_markdown: If True, returns formatted markdown. If False, returns JSON.
+        
+    Returns:
+        Narrative clinical resources with text content
+    """
+    url = f"{STAT_SERVER_URL}/Patient/{patient_id}/narratives"
+    params = {"as_markdown_df": str(as_markdown).lower()}
+    response = requests.get(url, params=params, timeout=30)
+    response.raise_for_status()
+    
+    if as_markdown:
+        return {"markdown": response.text}
+    return response.json()
+
+
+@mcp.tool()
+def get_patient_resource_type(
+    patient_id: str,
+    resource_type: str,
+    as_markdown: bool = False
+) -> Dict[str, Any]:
+    """
+    Get a specific resource type for a patient.
+    
+    Use this when you need only one type of clinical data (e.g., only Observations
+    or only Conditions) rather than all data at once.
+    
+    Common resource types:
+    - Observation: Lab values, vital signs, social history (smoking status, etc.)
+    - Condition: Diagnoses and medical conditions
+    - Procedure: Procedures performed
+    - MedicationRequest: Prescribed medications
+    - MedicationAdministration: Medications actually administered
+    - DiagnosticReport: Lab and imaging reports
+    - Immunization: Vaccines administered
+    - CarePlan: Care plans
+    
+    Args:
+        patient_id: The FHIR Patient resource ID
+        resource_type: FHIR resource type (e.g., "Observation", "Condition")
+        as_markdown: If True, returns formatted markdown table. If False, returns JSON.
+        
+    Returns:
+        List of resources of the specified type for the patient
+    """
+    url = f"{STAT_SERVER_URL}/Patient/{patient_id}/{resource_type}"
+    params = {"as_markdown_df": str(as_markdown).lower()}
+    response = requests.get(url, params=params, timeout=30)
+    response.raise_for_status()
+    
+    if as_markdown:
+        return {"markdown": response.text}
+    return response.json()
+
+
+# ============================================================================
+# PREDICTIVE MODEL TOOLS
 # ============================================================================
 
 @mcp.tool()
@@ -312,13 +226,16 @@ def list_available_models() -> List[Dict[str, Any]]:
     """
     List all registered predictive models available for execution.
     
+    Each model has specific input requirements (features, data types, units).
+    Use get_model_metadata() to see detailed requirements for a specific model.
+    
     Returns:
-        List of models with metadata including:
-        - image: Docker image tag for the model
+        List of models with basic metadata:
+        - image: Docker image tag (used to reference the model)
         - title: Human-readable model name
-        - short_description: Brief description of what the model does
+        - short_description: What the model predicts
         - authors: Model authors
-        - examples: Example input data for the model
+        - examples: Example input records showing expected format
     """
     url = f"{MODEL_SERVER_URL}/models"
     response = requests.get(url, timeout=10)
@@ -329,27 +246,30 @@ def list_available_models() -> List[Dict[str, Any]]:
 @mcp.tool()
 def get_model_metadata(image_tag: str) -> Dict[str, Any]:
     """
-    Get complete metadata for a specific model including its README documentation.
+    Get complete metadata and documentation for a specific model.
     
-    The README typically contains detailed information about:
+    This is ESSENTIAL for understanding how to prepare patient data for model input.
+    The README contains critical information about:
+    - Required input features (e.g., "age_at_time_0", "bmi", "smoking_status")
+    - Expected data types and units
+    - How to encode categorical variables
     - What the model predicts
-    - Input data format and requirements
     - Output format and interpretation
-    - Model performance metrics
-    - Citation information
-    - Usage examples
+    
+    Compare the model's required features with available patient data to determine
+    how to map FHIR resources (Observations, Conditions, etc.) to model inputs.
     
     Args:
-        image_tag: The Docker image tag for the model (e.g., "coxcopdmodel:latest")
+        image_tag: Model identifier from list_available_models() (e.g., "coxcopdmodel:latest")
         
     Returns:
-        Complete model metadata including:
+        Complete model metadata:
         - image: Docker image tag
         - title: Model name
         - short_description: Brief description
         - authors: Model authors
-        - examples: Example input data
-        - readme: Full README documentation (markdown format)
+        - examples: Example input records (shows exact format expected)
+        - readme: Full README documentation with feature descriptions
     """
     url = f"{MODEL_SERVER_URL}/models/{image_tag}"
     response = requests.get(url, timeout=10)
@@ -360,20 +280,42 @@ def get_model_metadata(image_tag: str) -> Dict[str, Any]:
 @mcp.tool()
 def execute_model(image_tag: str, input_data: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Execute a predictive model with provided input data.
+    Execute a predictive model on prepared input data.
     
-    The input data format depends on the specific model. Use get_model_metadata()
-    to see the expected format and example inputs for a model.
+    IMPORTANT: Input data must exactly match the model's expected format.
+    Use get_model_metadata() first to understand:
+    1. What features are required
+    2. What data types and units are expected
+    3. How to encode categorical variables
+    
+    The input_data should be a list of records (one per patient/observation),
+    where each record is a dictionary with keys matching the model's required features.
     
     Args:
-        image_tag: The Docker image tag for the model to execute
-        input_data: List of input records matching the model's expected format
+        image_tag: Model identifier (e.g., "coxcopdmodel:latest")
+        input_data: List of input records matching the model's expected format.
+                    Each record should be a dict with all required features.
         
     Returns:
-        Model predictions and execution logs:
-        - predictions: The model's output predictions
-        - stdout: Standard output from model execution
+        Model execution results:
+        - predictions: List of prediction records (one per input record)
+        - stdout: Standard output from model execution (may contain warnings)
         - stderr: Standard error/logging from model execution
+        
+    Example:
+        execute_model(
+            "coxcopdmodel:latest",
+            [
+                {
+                    "ethnicity": "Not Hispanic or Latino",
+                    "sex_at_birth": "Female",
+                    "obesity": 0.0,
+                    "diabetes": 0.0,
+                    "bmi": 25.0,
+                    "age_at_time_0": 50.0
+                }
+            ]
+        )
     """
     url = f"{MODEL_SERVER_URL}/predict"
     payload = {
@@ -386,110 +328,449 @@ def execute_model(image_tag: str, input_data: List[Dict[str, Any]]) -> Dict[str,
 
 
 # ============================================================================
-# RESOURCES - Provide access to documentation
+# RESOURCES - Documentation and Workflow Guidance
 # ============================================================================
 
-@mcp.resource("readme://synthea-server")
-def get_synthea_readme() -> str:
+@mcp.resource("readme://workflow")
+def get_workflow_readme() -> str:
     """
-    Get documentation about the Synthea synthetic data generation service.
+    Get documentation about the recommended workflow for LLM-assisted predictive modeling.
     """
     return """
-# Synthea Server
+# CHARMTwinsight Agent-Assisted Predictive Modeling Workflow
 
-The Synthea server provides synthetic patient data generation using the Synthea™ Patient Generator.
+## Overview for Agents
 
-## Features
+You have access to:
+1. **Patient data tools** - Retrieve structured clinical data for specific patients
+2. **Model execution tools** - Get model requirements and execute predictions
+3. **Resource parsers** - Patient data is already cleaned/parsed for easier consumption
 
-- Generate synthetic FHIR patient data
-- Asynchronous job-based generation for large cohorts
-- Geographic sampling (by state/city or population-weighted)
-- Age and gender filtering
-- Cohort management and tagging
+Your job is to bridge the gap between FHIR patient data and model input requirements.
 
-## Job-Based Generation
+## Key Concept: Data Mapping
 
-For reliability and progress tracking, patient generation uses an asynchronous job system:
+**The Challenge**: Models expect specific feature names (e.g., "bmi", "age_at_time_0", "smoking_status")
+but patient data comes as FHIR resources with:
+- Coded observations (LOINC codes for BMI, smoking status, labs)
+- Coded conditions (SNOMED codes for diabetes, COPD, etc.)
+- Nested structures (already flattened by parsers)
 
-1. Create a job with `create_synthetic_patients_job()`
-2. Poll status with `get_synthetic_job_status(job_id)`
-3. Access results when status is "completed"
+**Your Solution**: 
+1. Read model requirements from metadata
+2. Retrieve patient data for a specific patient
+3. Map FHIR observations/conditions to model features
+4. Execute model with mapped data
 
-Large generations are automatically chunked (100 patients per chunk) and patients are 
-incrementally added to the cohort, so partial results are available if a job fails.
+**Important**: All patient data is already parsed and cleaned by resource-specific parsers.
+You'll get flat dictionaries with fields like `code`, `code_display`, `value`, `value_unit` 
+for Observations, making mapping straightforward.
 
-## Cohorts
+## What Parsed Patient Data Looks Like
 
-All generated patients are tagged with a cohort_id and added to a FHIR Group resource.
-This allows for organized management of different patient populations.
+When you retrieve patient data, it's already parsed into clean dictionaries:
+
+**Patient Demographics** (from `get_patient_demographics()`):
+```json
+{
+  "id": "123",
+  "family_name": "Smith",
+  "given_name": "John",
+  "gender": "male",
+  "birth_date": "1970-05-15",
+  "age": 54,
+  "city": "Portland",
+  "state": "Oregon",
+  "ethnicity": "Not Hispanic or Latino",
+  "race": "White"
+}
+```
+
+**Observations** (from `get_patient_resource_type(patient_id, "Observation")`):
+```json
+[
+  {
+    "id": "obs-1",
+    "code": "39156-5",
+    "code_display": "Body Mass Index",
+    "value": 28.5,
+    "value_unit": "kg/m2",
+    "date": "2024-01-15",
+    "category": "vital-signs"
+  },
+  {
+    "id": "obs-2",
+    "code": "72166-2",
+    "code_display": "Tobacco smoking status",
+    "value_display": "Former smoker",
+    "date": "2024-01-15",
+    "category": "social-history"
+  }
+]
+```
+
+**Conditions** (from `get_patient_resource_type(patient_id, "Condition")`):
+```json
+[
+  {
+    "id": "cond-1",
+    "code": "44054006",
+    "code_display": "Diabetes mellitus type 2",
+    "clinical_status": "active",
+    "onset_date": "2020-03-10"
+  }
+]
+```
+
+These clean structures make mapping to model features straightforward!
+
+## Recommended Workflow
+
+### 1. Explore Available Models
+```
+models = list_available_models()
+# Review what models are available and what they predict
+```
+
+### 2. Understand Model Requirements
+```
+metadata = get_model_metadata("coxcopdmodel:latest")
+# Read the README to understand:
+# - Required input features
+# - Data types and units expected
+# - How to encode categorical variables
+# - Example inputs
+```
+
+### 3. Find Patients
+```
+patients = search_patients(count=10)
+# Or work with a specific patient ID
+```
+
+### 4. Retrieve Patient Clinical Data
+```
+# Get all structured data for comprehensive view
+data = get_patient_all_structured_data(patient_id)
+
+# Or get specific resource types if you know what you need
+observations = get_patient_resource_type(patient_id, "Observation")
+conditions = get_patient_resource_type(patient_id, "Condition")
+```
+
+### 5. Map FHIR Data to Model Inputs
+
+This is where your intelligence is crucial. Since data is already parsed, mapping is straightforward:
+
+**Example: Mapping for a COPD Risk Model**
+
+Model requires:
+- `age_at_time_0` (float)
+- `sex_at_birth` (string: "Male" or "Female")
+- `bmi` (float)
+- `diabetes` (float: 0.0 or 1.0)
+- `smoking_status` (float: 0.0=never, 1.0=current/former)
+
+Mapping code:
+```python
+# 1. Get patient demographics
+demographics = get_patient_demographics(patient_id)
+age_at_time_0 = demographics['age']
+sex_at_birth = demographics['gender'].capitalize()  # "male" -> "Male"
+
+# 2. Get observations
+observations = get_patient_resource_type(patient_id, "Observation")['observation']
+
+# 3. Extract BMI (LOINC 39156-5)
+bmi_obs = [o for o in observations if o['code'] == '39156-5']
+bmi = bmi_obs[0]['value'] if bmi_obs else None
+
+# 4. Extract smoking status (LOINC 72166-2)
+smoking_obs = [o for o in observations if o['code'] == '72166-2']
+if smoking_obs:
+    status = smoking_obs[0]['value_display'].lower()
+    smoking_status = 0.0 if 'never' in status else 1.0
+else:
+    smoking_status = None
+
+# 5. Check for diabetes condition (SNOMED 44054006)
+conditions = get_patient_resource_type(patient_id, "Condition")['condition']
+has_diabetes = any(c['code'] == '44054006' for c in conditions)
+diabetes = 1.0 if has_diabetes else 0.0
+
+# 6. Build model input
+model_input = {
+    "age_at_time_0": age_at_time_0,
+    "sex_at_birth": sex_at_birth,
+    "bmi": bmi,
+    "diabetes": diabetes,
+    "smoking_status": smoking_status
+}
+```
+
+### 6. Execute Model
+```python
+result = execute_model(
+    image_tag="coxcopdmodel:latest",
+    input_data=[model_input]  # List of input records
+)
+
+# Result contains:
+# - predictions: List of prediction dicts
+# - stdout: Model execution logs
+# - stderr: Any warnings/errors
+```
+
+### 7. Interpret Results
+
+```python
+prediction = result['predictions'][0]
+# e.g., {"partial_hazard": 0.866, "survival_probability_5_years": 0.963}
+
+# Check stdout/stderr for any warnings
+if result['stderr']:
+    print(f"Model warnings: {result['stderr']}")
+```
+
+## Tips for Agents
+
+1. **Always check model metadata first** - Use `get_model_metadata()` to understand exact requirements
+2. **Start with one patient** - Test your mapping logic on a single patient before batch processing
+3. **Use markdown output for exploration** - Set `as_markdown=True` to see human-readable tables when exploring data
+4. **Use JSON output for processing** - Set `as_markdown=False` to get structured data for writing mapping code
+5. **Handle missing data gracefully** - Not all patients will have all observations; decide how to handle nulls
+6. **Document your mapping logic** - Explain which FHIR codes/fields map to which model features
+7. **Check the parsed data structure** - Patient data is already parsed/cleaned by resource-specific parsers
+8. **Look at actual data** - Use `get_patient_resource_type()` to see what observations/conditions a patient has
+
+## Quick Reference: Common Code Mappings
+
+When mapping patient data to model inputs, here are common FHIR codes:
+
+**Observations (LOINC codes)**:
+- BMI: `39156-5` → use `value` field (float in kg/m2)
+- Smoking Status: `72166-2` → use `value_display` field (text like "Never smoker")
+- Body Weight: `29463-7` → use `value` field (usually kg)
+- Body Height: `8302-2` → use `value` field (usually cm)
+
+**Conditions (SNOMED codes)**:
+- Diabetes: `44054006`
+- Obesity: `414916001`
+- Hypertension: `38341003`
+- COPD: `13645005`
+
+**Mapping Tips**:
+- For binary flags (0/1): Check if condition exists in patient's condition list
+- For measurements: Extract `value` field from observations with matching code
+- For categories: Use `value_display` or `code_display` fields
 """
 
 
-@mcp.resource("readme://stat-server")
-def get_stat_server_readme() -> str:
+@mcp.resource("readme://patient-data")
+def get_patient_data_readme() -> str:
     """
-    Get documentation about the statistics/patient data server.
+    Get documentation about patient data access tools.
     """
     return """
-# Statistics Server (stat_server_py)
+# Patient Data Access
 
-Python-based REST API for accessing and analyzing FHIR patient data from the HAPI server.
+The stat_server_py provides structured access to FHIR patient data with resource-specific
+parsers that clean and flatten the data for easier consumption.
 
-## Features
+## Resource Types Available
 
-- Patient search and retrieval
-- Access to specific patient resources (conditions, observations, etc.)
-- FHIR $everything operation support
-- Data visualization endpoints
+### Structured Resources
+- **Patient**: Demographics (name, gender, birth date, address, ethnicity, race)
+- **Observation**: Lab values, vital signs, social history (smoking, alcohol), BMI, etc.
+- **Condition**: Diagnoses and medical conditions (coded with SNOMED, ICD-10, etc.)
+- **Procedure**: Procedures performed (coded with SNOMED, CPT, etc.)
+- **MedicationRequest**: Prescribed medications
+- **MedicationAdministration**: Medications actually administered
+- **Immunization**: Vaccines administered
+- **CarePlan**: Care plans and goals
 
-## Patient Data Access
+### Narrative Resources
+- **DiagnosticReport**: Lab reports, imaging reports with text descriptions
+- **DocumentReference**: Clinical notes, discharge summaries, consultation notes
 
-The server provides structured access to patient data:
+## Using the Tools
 
-- **Demographics**: Basic patient information (name, gender, birth date)
-- **Conditions**: Medical diagnoses and health problems
-- **Observations**: Measurements and test results
-- **Procedures**: Medical procedures performed
-- **Medications**: Prescribed and administered medications
-- **Encounters**: Healthcare visits and episodes
+### For Comprehensive Data
+Use `get_patient_all_structured_data()` to retrieve everything at once:
+```python
+data = get_patient_all_structured_data(patient_id="123")
+# Returns: {"patient_id": "123", "resources": {"Patient": {...}, "Observation": {...}, ...}}
+```
 
-Use `get_patient_everything()` to retrieve all related resources for a patient in one call.
+### For Specific Resource Types
+Use `get_patient_resource_type()` when you only need one type:
+```python
+observations = get_patient_resource_type(patient_id="123", resource_type="Observation")
+conditions = get_patient_resource_type(patient_id="123", resource_type="Condition")
+```
+
+### Markdown vs JSON Output
+- **JSON (default)**: Structured data for programmatic processing
+- **Markdown**: Human-readable tables for quick review and exploration
+
+```python
+# For processing
+data = get_patient_all_structured_data(patient_id="123", as_markdown=False)
+
+# For review
+data = get_patient_all_structured_data(patient_id="123", as_markdown=True)
+print(data['markdown'])  # Formatted tables
+```
+
+## Resource-Specific Parsers
+
+Each resource type has a parser that extracts the most relevant fields:
+
+### Observation Parser
+Extracts:
+- code, code_display (what was measured)
+- value, value_unit (the measurement)
+- date (when measured)
+- category (lab, vital-signs, social-history, etc.)
+
+### Condition Parser
+Extracts:
+- code, code_display (diagnosis)
+- clinical_status (active, resolved, etc.)
+- onset_date, abatement_date
+- severity
+
+### Medication Parser
+Extracts:
+- medication_code, medication_display
+- dosage, route, frequency
+- authored_date (when prescribed)
+- status (active, completed, stopped)
+
+## Common Observation Codes
+
+- **BMI**: LOINC 39156-5
+- **Body Weight**: LOINC 29463-7
+- **Body Height**: LOINC 8302-2
+- **Smoking Status**: LOINC 72166-2
+- **Blood Pressure**: LOINC 85354-9 (systolic 8480-6, diastolic 8462-4)
+- **Heart Rate**: LOINC 8867-4
+- **Respiratory Rate**: LOINC 9279-1
+- **Body Temperature**: LOINC 8310-5
+- **Oxygen Saturation**: LOINC 2708-6
+
+## Common Condition Codes (SNOMED)
+
+- **Diabetes**: 44054006
+- **Hypertension**: 38341003
+- **Obesity**: 414916001
+- **COPD**: 13645005
+- **Asthma**: 195967001
+- **Coronary Artery Disease**: 53741008
+
+Use `get_patient_resource_type(patient_id, "Observation")` to see what observations
+exist for a specific patient. Common observations include BMI, smoking status, vital signs, and lab values.
 """
 
 
-@mcp.resource("readme://model-server")
-def get_model_server_readme() -> str:
+@mcp.resource("readme://models")
+def get_models_readme() -> str:
     """
-    Get documentation about the model server for predictive analytics.
+    Get documentation about the model execution system.
     """
     return """
-# Model Server
+# Predictive Model Execution
 
-REST API for hosting and executing machine learning models packaged as Docker containers.
+Models are packaged as Docker containers and executed in isolated environments.
 
-## Features
+## Model Structure
 
-- Model registration and metadata management
-- Containerized model execution with isolated environments
-- Support for Python and R models
-- Automatic example extraction from containers
+Each model includes:
+- **model_metadata.json**: Title, description, authors
+- **examples.json**: Example input records showing exact format
+- **README.md**: Detailed documentation about features, output, and usage
+- **predict script**: Executable that reads input.json and writes output.json
 
-## Available Models
+## Input/Output Format
 
-Use `list_available_models()` to see all registered models. Each model includes:
+Models communicate via JSON files:
 
-- **README**: Detailed documentation about the model
-- **Examples**: Sample input data showing expected format
-- **Metadata**: Title, description, and author information
+### Input (what you provide)
+```json
+[
+  {
+    "feature1": value1,
+    "feature2": value2,
+    ...
+  },
+  {
+    "feature1": value3,
+    "feature2": value4,
+    ...
+  }
+]
+```
 
-## Executing Models
+### Output (what model returns)
+```json
+{
+  "predictions": [
+    {
+      "predicted_field1": value1,
+      "predicted_field2": value2,
+      ...
+    },
+    ...
+  ],
+  "stdout": "Model execution logs...",
+  "stderr": "Warnings or errors..."
+}
+```
 
-1. Get model metadata with `get_model_metadata(image_tag)` to understand input format
-2. Prepare your input data matching the model's expected schema
-3. Execute with `execute_model(image_tag, input_data)`
-4. Review predictions and any model logging output
+## Feature Requirements
 
-Models run in isolated Docker containers and communicate via file-based I/O for reliability.
+Each model has specific requirements. Common patterns:
+
+### Demographic Features
+- Age (usually as `age` or `age_at_time_0`)
+- Sex/Gender (usually as `sex_at_birth`, "Male"/"Female")
+- Ethnicity/Race (text labels)
+
+### Clinical Measurements
+- BMI (usually float in kg/m2)
+- Blood pressure (systolic, diastolic)
+- Lab values (glucose, cholesterol, etc.)
+
+### Condition Flags
+Often binary indicators (0.0/1.0):
+- `diabetes`: 1.0 if patient has diabetes
+- `obesity`: 1.0 if patient has obesity
+- `cardiovascular_disease`: 1.0 if CVD present
+- `smoking_status`: 0.0 = never, 1.0 = current/former
+
+### Dates and Time
+- May need age at specific time point
+- Time since diagnosis
+- Duration of condition
+
+## Handling Missing Data
+
+Models may:
+1. Accept null/None values and impute internally
+2. Require all features (fail if missing)
+3. Have default values documented in README
+
+Check the model's README and examples for guidance.
+
+## Model Output Interpretation
+
+Common output types:
+- **Classification**: Predicted class label and/or probability
+- **Regression**: Predicted continuous value (risk score, survival time, etc.)
+- **Survival**: Hazard ratios, survival probabilities at time points
+- **Clustering**: Cluster assignments
+
+Read the model's README for specifics on interpreting output.
 """
 
 
