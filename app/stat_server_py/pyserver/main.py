@@ -105,13 +105,24 @@ async def health_check():
         }
 
 
-@app.get("/patients", response_class=JSONResponse)
+@app.get("/patients")
 async def get_patients(
     name: str = Query(None, description="Patient name to search for"),
     gender: str = Query(None, description="Patient gender"),
     birthdate: str = Query(None, description="Patient birthdate (YYYY-MM-DD)"),
-    _count: int = Query(10, description="Number of results to return")
+    _count: int = Query(10, description="Number of results to return"),
+    as_markdown: bool = Query(False, description="Return results as a markdown-formatted table")
 ):
+    """
+    Search for patients based on various parameters.
+    
+    Parameters:
+    - name: Patient name to search for
+    - gender: Patient gender
+    - birthdate: Patient birthdate (YYYY-MM-DD)
+    - _count: Number of results to return
+    - as_markdown: If True, returns formatted markdown table. If False (default), returns JSON.
+    """
     try:
         search_params = {}
         if name:
@@ -130,16 +141,32 @@ async def get_patients(
         if df is not None and not df.empty:
             logger.info(f"Found {len(df)} patients")
             logger.info(f"DataFrame columns: {df.columns.tolist()}")
+            
+            # Limit results to _count (fhiry library may not respect _count parameter)
+            if _count and len(df) > _count:
+                logger.info(f"Limiting results from {len(df)} to {_count}")
+                df = df.head(_count)
         else:
             logger.warning("No patients found or empty dataframe returned")
+            if as_markdown:
+                return Response(content="No patients found", media_type="text/plain")
             return {"patients": []}
         
         # replace NaN values with None
         df = df.astype(object).where(pd.notna(df), None)
         
-        patients_dict = df.to_dict(orient='records')
-        
-        return {"patients": patients_dict, "count": len(patients_dict)}
+        if as_markdown:
+            # Use PatientParser to parse the data for cleaner output
+            parsed_df = PatientParser.parse(df)
+            
+            # Convert to markdown table
+            markdown_table = parsed_df.to_markdown(index=False)
+            return Response(content=markdown_table, media_type="text/plain")
+        else:
+            # Return as JSON - use PatientParser for clean, consistent output with patient_id
+            parsed_df = PatientParser.parse(df)
+            patients_dict = parsed_df.to_dict(orient='records')
+            return {"patients": patients_dict, "count": len(patients_dict)}
         
     except Exception as e:
         logger.error(f"Error retrieving patients: {str(e)}", exc_info=True)
@@ -157,7 +184,9 @@ async def get_patient_by_id(patient_id: str):
         # replace NaN values with None
         df = df.astype(object).where(pd.notna(df), None)
         
-        patient_dict = df.to_dict(orient='records')[0]
+        # Use PatientParser for clean, consistent output with patient_id
+        parsed_df = PatientParser.parse(df)
+        patient_dict = parsed_df.to_dict(orient='records')[0]
         
         return patient_dict
         

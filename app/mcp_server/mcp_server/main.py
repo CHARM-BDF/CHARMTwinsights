@@ -19,6 +19,7 @@ import os
 import requests
 from typing import Optional, List, Dict, Any
 from fastmcp import FastMCP
+import sys
 
 # Create the MCP server
 mcp = FastMCP("CHARMTwinsight-Modeling")
@@ -37,7 +38,7 @@ def search_patients(
     gender: Optional[str] = None,
     birthdate: Optional[str] = None,
     count: int = 10
-) -> Dict[str, Any]:
+) -> str:
     """
     Search for patients matching specified criteria.
     
@@ -49,9 +50,11 @@ def search_patients(
         gender: Patient gender ("male", "female", "other", "unknown")
         birthdate: Patient birth date in YYYY-MM-DD format
         count: Maximum number of results to return (default 10)
+        as_markdown: If True (default), returns compact markdown table to save context.
+                     If False, returns full JSON. Use markdown for browsing, JSON for processing.
         
     Returns:
-        List of matching patients with ID, name, gender, birth date, etc.
+        Markdown table or JSON list of matching patients with ID, name, gender, birth date, etc.
     """
     url = f"{STAT_SERVER_URL}/patients"
     params = {"_count": count}
@@ -62,17 +65,20 @@ def search_patients(
         params["gender"] = gender
     if birthdate:
         params["birthdate"] = birthdate
+    
+    params["as_markdown"] = "true"
         
     response = requests.get(url, params=params, timeout=10)
     response.raise_for_status()
-    return response.json()
+    
+    sys.stderr.write(response.text)
+    return response.text
 
 
 @mcp.tool()
 def get_patient_demographics(
-    patient_id: str,
-    as_markdown: bool = False
-) -> Dict[str, Any]:
+    patient_id: str
+) -> str:
     """
     Get demographic information for a specific patient.
     
@@ -87,20 +93,16 @@ def get_patient_demographics(
     
     Args:
         patient_id: The FHIR Patient resource ID
-        as_markdown: If True, returns human-readable markdown format.
-                     If False (default), returns structured JSON.
         
     Returns:
-        Patient demographic data in requested format
+        Patient demographic data in human-readable markdown format
     """
     url = f"{STAT_SERVER_URL}/Patient/{patient_id}"
-    params = {"as_markdown": str(as_markdown).lower()}
+    params = {"as_markdown": "true"}
     response = requests.get(url, params=params, timeout=10)
     response.raise_for_status()
     
-    if as_markdown:
-        return {"markdown": response.text}
-    return response.json()
+    return response.text
 
 
 # ============================================================================
@@ -109,9 +111,8 @@ def get_patient_demographics(
 
 @mcp.tool()
 def get_patient_all_structured_data(
-    patient_id: str,
-    as_markdown: bool = False
-) -> Dict[str, Any]:
+    patient_id: str
+) -> str:
     """
     Get ALL structured clinical data for a patient in one call.
     
@@ -129,27 +130,22 @@ def get_patient_all_structured_data(
     
     Args:
         patient_id: The FHIR Patient resource ID
-        as_markdown: If True, returns human-readable markdown tables (useful for quick review).
-                     If False (default), returns structured JSON for programmatic processing.
         
     Returns:
-        All structured clinical resources organized by type with parsed/cleaned data
+        All structured clinical resources organized by type in human-readable markdown tables
     """
     url = f"{STAT_SERVER_URL}/Patient/{patient_id}/all-structured"
-    params = {"as_markdown_df": str(as_markdown).lower()}
+    params = {"as_markdown_df": "true"}
     response = requests.get(url, params=params, timeout=30)
     response.raise_for_status()
     
-    if as_markdown:
-        return {"markdown": response.text}
-    return response.json()
+    return response.text
 
 
 @mcp.tool()
 def get_patient_narrative_data(
-    patient_id: str,
-    as_markdown: bool = False
-) -> Dict[str, Any]:
+    patient_id: str
+) -> str:
     """
     Get narrative/free-text clinical data for a patient.
     
@@ -162,27 +158,23 @@ def get_patient_narrative_data(
     
     Args:
         patient_id: The FHIR Patient resource ID
-        as_markdown: If True, returns formatted markdown. If False, returns JSON.
         
     Returns:
-        Narrative clinical resources with text content
+        Narrative clinical resources with text content in formatted markdown
     """
     url = f"{STAT_SERVER_URL}/Patient/{patient_id}/narratives"
-    params = {"as_markdown_df": str(as_markdown).lower()}
+    params = {"as_markdown_df": "true"}
     response = requests.get(url, params=params, timeout=30)
     response.raise_for_status()
     
-    if as_markdown:
-        return {"markdown": response.text}
-    return response.json()
+    return response.text
 
 
 @mcp.tool()
 def get_patient_resource_type(
     patient_id: str,
-    resource_type: str,
-    as_markdown: bool = False
-) -> Dict[str, Any]:
+    resource_type: str
+) -> str:
     """
     Get a specific resource type for a patient.
     
@@ -202,19 +194,17 @@ def get_patient_resource_type(
     Args:
         patient_id: The FHIR Patient resource ID
         resource_type: FHIR resource type (e.g., "Observation", "Condition")
-        as_markdown: If True, returns formatted markdown table. If False, returns JSON.
         
     Returns:
-        List of resources of the specified type for the patient
+        List of resources of the specified type for the patient in formatted markdown table
     """
     url = f"{STAT_SERVER_URL}/Patient/{patient_id}/{resource_type}"
-    params = {"as_markdown_df": str(as_markdown).lower()}
+    params = {"as_markdown_df": "true"}
     response = requests.get(url, params=params, timeout=30)
     response.raise_for_status()
+    sys.stderr.write(f"Response: {response.text}") 
     
-    if as_markdown:
-        return {"markdown": response.text}
-    return response.json()
+    return response.text
 
 
 # ============================================================================
@@ -450,10 +440,10 @@ patients = search_patients(count=10)
 
 ### 4. Retrieve Patient Clinical Data
 ```
-# Get all structured data for comprehensive view
+# Get all structured data for comprehensive view (returns markdown tables)
 data = get_patient_all_structured_data(patient_id)
 
-# Or get specific resource types if you know what you need
+# Or get specific resource types if you know what you need (returns markdown tables)
 observations = get_patient_resource_type(patient_id, "Observation")
 conditions = get_patient_resource_type(patient_id, "Condition")
 ```
@@ -536,8 +526,8 @@ if result['stderr']:
 
 1. **Always check model metadata first** - Use `get_model_metadata()` to understand exact requirements
 2. **Start with one patient** - Test your mapping logic on a single patient before batch processing
-3. **Use markdown output for exploration** - Set `as_markdown=True` to see human-readable tables when exploring data
-4. **Use JSON output for processing** - Set `as_markdown=False` to get structured data for writing mapping code
+3. **Patient data is returned as markdown** - All patient data tools return human-readable markdown tables
+4. **Parse markdown tables** - Extract data from markdown format when preparing model inputs
 5. **Handle missing data gracefully** - Not all patients will have all observations; decide how to handle nulls
 6. **Document your mapping logic** - Explain which FHIR codes/fields map to which model features
 7. **Check the parsed data structure** - Patient data is already parsed/cleaned by resource-specific parsers
@@ -599,7 +589,7 @@ parsers that clean and flatten the data for easier consumption.
 Use `get_patient_all_structured_data()` to retrieve everything at once:
 ```python
 data = get_patient_all_structured_data(patient_id="123")
-# Returns: {"patient_id": "123", "resources": {"Patient": {...}, "Observation": {...}, ...}}
+# Returns: Markdown-formatted tables with all clinical data
 ```
 
 ### For Specific Resource Types
@@ -607,20 +597,11 @@ Use `get_patient_resource_type()` when you only need one type:
 ```python
 observations = get_patient_resource_type(patient_id="123", resource_type="Observation")
 conditions = get_patient_resource_type(patient_id="123", resource_type="Condition")
+# Returns: Markdown-formatted tables
 ```
 
-### Markdown vs JSON Output
-- **JSON (default)**: Structured data for programmatic processing
-- **Markdown**: Human-readable tables for quick review and exploration
-
-```python
-# For processing
-data = get_patient_all_structured_data(patient_id="123", as_markdown=False)
-
-# For review
-data = get_patient_all_structured_data(patient_id="123", as_markdown=True)
-print(data['markdown'])  # Formatted tables
-```
+### Output Format
+All patient data tools return **markdown-formatted tables** for easy reading and context efficiency.
 
 ## Resource-Specific Parsers
 
@@ -779,12 +760,12 @@ Read the model's README for specifics on interpreting output.
 # ============================================================================
 
 if __name__ == "__main__":
-    # Run the MCP server in HTTP mode (streamable HTTP transport)
-    # This will start an HTTP server on the specified host and port
+    # Run the MCP server in HTTP mode
+    # Using streamable-http transport
     import os
     host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8000"))
     
-    # Use streamable HTTP transport (recommended over SSE)
+    # Use streamable-http transport
     mcp.run(transport="streamable-http", host=host, port=port)
 

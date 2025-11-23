@@ -31,6 +31,16 @@ class PatientParser(BaseParser):
         for idx, row in df.iterrows():
             parsed_row = {}
             
+            # Extract patient ID (always include this)
+            # Try multiple possible column names for the ID
+            patient_id = row.get('resource.id') or row.get('id')
+            # If still None, try extracting from fullUrl
+            if not patient_id:
+                full_url = row.get('fullUrl')
+                if isinstance(full_url, str) and '/' in full_url:
+                    patient_id = full_url.split('/')[-1]
+            parsed_row['patient_id'] = patient_id
+            
             # Extract cohort from meta.tag
             parsed_row['cohort'] = PatientParser._extract_cohort(row)
             
@@ -138,9 +148,14 @@ class PatientParser(BaseParser):
         
         result_df = pd.DataFrame(parsed_rows)
         
-        # Remove columns that are entirely empty (all None/NaN)
+        # Remove columns that are entirely empty (all None/NaN), but keep patient_id
         if not result_df.empty:
-            result_df = result_df.dropna(axis=1, how='all')
+            # Get columns to keep (non-empty or patient_id)
+            cols_to_keep = []
+            for col in result_df.columns:
+                if col == 'patient_id' or not result_df[col].isna().all():
+                    cols_to_keep.append(col)
+            result_df = result_df[cols_to_keep]
         
         return result_df
 
