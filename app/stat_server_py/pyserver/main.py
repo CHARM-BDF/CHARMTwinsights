@@ -110,7 +110,7 @@ async def get_patients(
     name: str = Query(None, description="Patient name to search for"),
     gender: str = Query(None, description="Patient gender"),
     birthdate: str = Query(None, description="Patient birthdate (YYYY-MM-DD)"),
-    _count: int = Query(10, description="Number of results to return"),
+    count: int = Query(10, description="Number of results to return"),
     as_markdown: bool = Query(False, description="Return results as a markdown-formatted table")
 ):
     """
@@ -120,7 +120,7 @@ async def get_patients(
     - name: Patient name to search for
     - gender: Patient gender
     - birthdate: Patient birthdate (YYYY-MM-DD)
-    - _count: Number of results to return
+    - count: Number of results to return
     - as_markdown: If True, returns formatted markdown table. If False (default), returns JSON.
     """
     try:
@@ -131,8 +131,6 @@ async def get_patients(
             search_params["gender"] = gender
         if birthdate:
             search_params["birthdate"] = birthdate
-        if _count:
-            search_params["_count"] = str(_count)
             
         logger.info(f"Searching for patients with params: {search_params}")
         
@@ -143,9 +141,9 @@ async def get_patients(
             logger.info(f"DataFrame columns: {df.columns.tolist()}")
             
             # Limit results to _count (fhiry library may not respect _count parameter)
-            if _count and len(df) > _count:
-                logger.info(f"Limiting results from {len(df)} to {_count}")
-                df = df.head(_count)
+            if count and len(df) > count:
+                logger.info(f"Limiting results from {len(df)} to {count}")
+                df = df.head(count)
         else:
             logger.warning("No patients found or empty dataframe returned")
             if as_markdown:

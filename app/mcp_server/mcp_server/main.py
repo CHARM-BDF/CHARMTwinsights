@@ -1,18 +1,5 @@
 """
-CHARMTwinsight MCP Server - Patient Data & Predictive Modeling
-
-This MCP server provides tools for LLM-assisted predictive modeling on patient data:
-- Comprehensive patient data access from HAPI FHIR
-- Data exploration (understanding codes, units, and available observations)
-- Predictive model execution
-
-The primary use case is enabling an LLM to:
-1. Understand what data is available in the system
-2. Retrieve patient clinical data in structured formats
-3. Map FHIR data to model input requirements
-4. Execute predictive models on patient data
-
-All tools communicate with internal microservices in the CHARMTwinsight stack.
+CHARMTwinsight MCP Server
 """
 
 import os
@@ -50,11 +37,9 @@ def search_patients(
         gender: Patient gender ("male", "female", "other", "unknown")
         birthdate: Patient birth date in YYYY-MM-DD format
         count: Maximum number of results to return (default 10)
-        as_markdown: If True (default), returns compact markdown table to save context.
-                     If False, returns full JSON. Use markdown for browsing, JSON for processing.
         
     Returns:
-        Markdown table or JSON list of matching patients with ID, name, gender, birth date, etc.
+        Markdown table matching patients with ID, name, gender, birth date, etc.
     """
     url = f"{STAT_SERVER_URL}/patients"
     params = {"_count": count}
@@ -132,7 +117,7 @@ def get_patient_all_structured_data(
         patient_id: The FHIR Patient resource ID
         
     Returns:
-        All structured clinical resources organized by type in human-readable markdown tables
+        All structured clinical resources organized by type in human-readable markdown tables.
     """
     url = f"{STAT_SERVER_URL}/Patient/{patient_id}/all-structured"
     params = {"as_markdown_df": "true"}
@@ -155,6 +140,10 @@ def get_patient_narrative_data(
     
     Narrative data contains free-text descriptions that may provide additional
     context not available in structured data.
+
+    WARNING: This tool may return a lot of data. Use with caution.
+    If you need to get specific resource types, use the get_patient_resource_type() tool.
+    If you need to get all resource types other than narrative, use the get_patient_all_structured_data() tool.
     
     Args:
         patient_id: The FHIR Patient resource ID
@@ -173,38 +162,45 @@ def get_patient_narrative_data(
 @mcp.tool()
 def get_patient_resource_type(
     patient_id: str,
-    resource_type: str
+    resource_types: list[str]
 ) -> str:
     """
-    Get a specific resource type for a patient.
+    Get specific resource types for a patient.
     
-    Use this when you need only one type of clinical data (e.g., only Observations
-    or only Conditions) rather than all data at once.
+    Use this when you need one or more types of clinical data (e.g., only Observations
+    or only Conditions, or both) rather than all data at once.
     
-    Common resource types:
+    Available resource types:
     - Observation: Lab values, vital signs, social history (smoking status, etc.)
     - Condition: Diagnoses and medical conditions
     - Procedure: Procedures performed
     - MedicationRequest: Prescribed medications
     - MedicationAdministration: Medications actually administered
-    - DiagnosticReport: Lab and imaging reports
     - Immunization: Vaccines administered
     - CarePlan: Care plans
+
+    Observations and Conditions should generally be used together for evaluating a patient's health.
+    MedicationRequests, MedicationAdministrations, and Immunizations may be used to evaluate a patient's treatment history.
     
     Args:
         patient_id: The FHIR Patient resource ID
-        resource_type: FHIR resource type (e.g., "Observation", "Condition")
+        resource_types: List of FHIR resource types (e.g., ["Observation", "Condition"])
         
     Returns:
-        List of resources of the specified type for the patient in formatted markdown table
+        Combined markdown tables for the specified resource types
     """
-    url = f"{STAT_SERVER_URL}/Patient/{patient_id}/{resource_type}"
-    params = {"as_markdown_df": "true"}
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
-    sys.stderr.write(f"Response: {response.text}") 
+    results = []
+    for resource_type in resource_types:
+        url = f"{STAT_SERVER_URL}/Patient/{patient_id}/{resource_type}"
+        params = {"as_markdown_df": "true"}
+        response = requests.get(url, params=params, timeout=30)
+        response.raise_for_status()
+        sys.stderr.write(f"Response for {resource_type}: {response.text}\n")
+        
+        if response.text.strip():
+            results.append(f"## {resource_type}\n\n{response.text}")
     
-    return response.text
+    return "\n\n".join(results) if results else "No data found for the specified resource types."
 
 
 # ============================================================================
@@ -332,227 +328,83 @@ def get_workflow_readme() -> str:
 ## Overview for Agents
 
 You have access to:
-1. **Patient data tools** - Retrieve structured clinical data for specific patients
+1. **Patient data tools** - Retrieve structured clinical data for specific patients, already parsed and cleaned for easier consumption.
 2. **Model execution tools** - Get model requirements and execute predictions
-3. **Resource parsers** - Patient data is already cleaned/parsed for easier consumption
 
 Your job is to bridge the gap between FHIR patient data and model input requirements.
 
 ## Key Concept: Data Mapping
 
 **The Challenge**: Models expect specific feature names (e.g., "bmi", "age_at_time_0", "smoking_status")
-but patient data comes as FHIR resources with:
+but raw patient data is stored in FHIR format with:
 - Coded observations (LOINC codes for BMI, smoking status, labs)
 - Coded conditions (SNOMED codes for diabetes, COPD, etc.)
-- Nested structures (already flattened by parsers)
+
+Fortunatley, the stat_server_py provides structured access to FHIR patient data with 
+resource-specific parsers that clean and flatten the data for easier consumption.
 
 **Your Solution**: 
-1. Read model requirements from metadata
+1. Understand model requirements from metadata
 2. Retrieve patient data for a specific patient
-3. Map FHIR observations/conditions to model features
-4. Execute model with mapped data
-
-**Important**: All patient data is already parsed and cleaned by resource-specific parsers.
-You'll get flat dictionaries with fields like `code`, `code_display`, `value`, `value_unit` 
-for Observations, making mapping straightforward.
-
-## What Parsed Patient Data Looks Like
-
-When you retrieve patient data, it's already parsed into clean dictionaries:
-
-**Patient Demographics** (from `get_patient_demographics()`):
-```json
-{
-  "id": "123",
-  "family_name": "Smith",
-  "given_name": "John",
-  "gender": "male",
-  "birth_date": "1970-05-15",
-  "age": 54,
-  "city": "Portland",
-  "state": "Oregon",
-  "ethnicity": "Not Hispanic or Latino",
-  "race": "White"
-}
-```
-
-**Observations** (from `get_patient_resource_type(patient_id, "Observation")`):
-```json
-[
-  {
-    "id": "obs-1",
-    "code": "39156-5",
-    "code_display": "Body Mass Index",
-    "value": 28.5,
-    "value_unit": "kg/m2",
-    "date": "2024-01-15",
-    "category": "vital-signs"
-  },
-  {
-    "id": "obs-2",
-    "code": "72166-2",
-    "code_display": "Tobacco smoking status",
-    "value_display": "Former smoker",
-    "date": "2024-01-15",
-    "category": "social-history"
-  }
-]
-```
-
-**Conditions** (from `get_patient_resource_type(patient_id, "Condition")`):
-```json
-[
-  {
-    "id": "cond-1",
-    "code": "44054006",
-    "code_display": "Diabetes mellitus type 2",
-    "clinical_status": "active",
-    "onset_date": "2020-03-10"
-  }
-]
-```
-
-These clean structures make mapping to model features straightforward!
+3. Analyze the markdown tables to extract relevant values
+4. Map data to model features based on LOINC/SNOMED codes and field names
+5. Execute model with prepared input data
 
 ## Recommended Workflow
 
-### 1. Explore Available Models
-```
-models = list_available_models()
-# Review what models are available and what they predict
-```
+### 1. Find Patients
+Use `search_patients()` to find patients by name, gender, or birthdate.
+Returns demographic info including patient_id, name, gender, birth_date, race, ethnicity.
 
-### 2. Understand Model Requirements
-```
-metadata = get_model_metadata("coxcopdmodel:latest")
-# Read the README to understand:
-# - Required input features
-# - Data types and units expected
-# - How to encode categorical variables
-# - Example inputs
-```
+### 2. Get Patient Demographics
+Use `get_patient_demographics(patient_id)` for detailed demographics including:
+- cohort, given_name, family_name, prefix, gender
+- birth_date, deceased_date, race, ethnicity, birth_sex
+- address, city, state, postal_code, phone, language
 
-### 3. Find Patients
-```
-patients = search_patients(count=10)
-# Or work with a specific patient ID
-```
+Returns markdown-formatted key-value pairs.
 
-### 4. Retrieve Patient Clinical Data
-```
-# Get all structured data for comprehensive view (returns markdown tables)
-data = get_patient_all_structured_data(patient_id)
+### 3. Retrieve Patient Clinical Data
+Use `get_patient_resource_type(patient_id, resource_types_list)` to get one or more resource types:
 
-# Or get specific resource types if you know what you need (returns markdown tables)
-observations = get_patient_resource_type(patient_id, "Observation")
-conditions = get_patient_resource_type(patient_id, "Condition")
-```
+Common combinations:
+- `["Observation", "Condition"]` - For clinical assessments and diagnoses
+- `["MedicationRequest", "MedicationAdministration"]` - For medication history
+- `["Procedure"]` - For procedures performed
 
-### 5. Map FHIR Data to Model Inputs
+Or use `get_patient_all_structured_data(patient_id)` to retrieve everything at once
+(Observation, Condition, Procedure, MedicationRequest, MedicationAdministration, Immunization, CarePlan).
 
-This is where your intelligence is crucial. Since data is already parsed, mapping is straightforward:
+All return markdown-formatted tables.
 
-**Example: Mapping for a COPD Risk Model**
+### 4. Explore and Understand Models
+- `list_available_models()` - See what models are available
+- `get_model_metadata(image_tag)` - Get model details including README with feature requirements and examples
 
-Model requires:
-- `age_at_time_0` (float)
-- `sex_at_birth` (string: "Male" or "Female")
-- `bmi` (float)
-- `diabetes` (float: 0.0 or 1.0)
-- `smoking_status` (float: 0.0=never, 1.0=current/former)
-
-Mapping code:
-```python
-# 1. Get patient demographics
-demographics = get_patient_demographics(patient_id)
-age_at_time_0 = demographics['age']
-sex_at_birth = demographics['gender'].capitalize()  # "male" -> "Male"
-
-# 2. Get observations
-observations = get_patient_resource_type(patient_id, "Observation")['observation']
-
-# 3. Extract BMI (LOINC 39156-5)
-bmi_obs = [o for o in observations if o['code'] == '39156-5']
-bmi = bmi_obs[0]['value'] if bmi_obs else None
-
-# 4. Extract smoking status (LOINC 72166-2)
-smoking_obs = [o for o in observations if o['code'] == '72166-2']
-if smoking_obs:
-    status = smoking_obs[0]['value_display'].lower()
-    smoking_status = 0.0 if 'never' in status else 1.0
-else:
-    smoking_status = None
-
-# 5. Check for diabetes condition (SNOMED 44054006)
-conditions = get_patient_resource_type(patient_id, "Condition")['condition']
-has_diabetes = any(c['code'] == '44054006' for c in conditions)
-diabetes = 1.0 if has_diabetes else 0.0
-
-# 6. Build model input
-model_input = {
-    "age_at_time_0": age_at_time_0,
-    "sex_at_birth": sex_at_birth,
-    "bmi": bmi,
-    "diabetes": diabetes,
-    "smoking_status": smoking_status
-}
-```
+### 5. Map Data to Model Features
+Analyze the markdown tables returned from patient data tools to extract values needed by the model.
+Use the code columns (like code_text for observations, condition_text for conditions) and LOINC/SNOMED
+codes to identify relevant data points. Extract numeric values from value_with_unit columns.
 
 ### 6. Execute Model
-```python
-result = execute_model(
-    image_tag="coxcopdmodel:latest",
-    input_data=[model_input]  # List of input records
-)
+Call `execute_model(image_tag, input_data)` where input_data is a list of dicts with model features.
 
-# Result contains:
-# - predictions: List of prediction dicts
-# - stdout: Model execution logs
-# - stderr: Any warnings/errors
-```
+Result contains:
+- predictions: List of prediction dicts
+- stdout: Model execution logs
+- stderr: Any warnings/errors
 
 ### 7. Interpret Results
-
-```python
-prediction = result['predictions'][0]
-# e.g., {"partial_hazard": 0.866, "survival_probability_5_years": 0.963}
-
-# Check stdout/stderr for any warnings
-if result['stderr']:
-    print(f"Model warnings: {result['stderr']}")
-```
+Interpret the predictions for the user, citing relevant patient data that informed the model.
 
 ## Tips for Agents
 
 1. **Always check model metadata first** - Use `get_model_metadata()` to understand exact requirements
-2. **Start with one patient** - Test your mapping logic on a single patient before batch processing
-3. **Patient data is returned as markdown** - All patient data tools return human-readable markdown tables
-4. **Parse markdown tables** - Extract data from markdown format when preparing model inputs
-5. **Handle missing data gracefully** - Not all patients will have all observations; decide how to handle nulls
-6. **Document your mapping logic** - Explain which FHIR codes/fields map to which model features
-7. **Check the parsed data structure** - Patient data is already parsed/cleaned by resource-specific parsers
-8. **Look at actual data** - Use `get_patient_resource_type()` to see what observations/conditions a patient has
-
-## Quick Reference: Common Code Mappings
-
-When mapping patient data to model inputs, here are common FHIR codes:
-
-**Observations (LOINC codes)**:
-- BMI: `39156-5` → use `value` field (float in kg/m2)
-- Smoking Status: `72166-2` → use `value_display` field (text like "Never smoker")
-- Body Weight: `29463-7` → use `value` field (usually kg)
-- Body Height: `8302-2` → use `value` field (usually cm)
-
-**Conditions (SNOMED codes)**:
-- Diabetes: `44054006`
-- Obesity: `414916001`
-- Hypertension: `38341003`
-- COPD: `13645005`
-
-**Mapping Tips**:
-- For binary flags (0/1): Check if condition exists in patient's condition list
-- For measurements: Extract `value` field from observations with matching code
-- For categories: Use `value_display` or `code_display` fields
+2. **Use markdown table structure** - Patient data comes as markdown tables; parse them to extract values
+3. **Look for specific codes** - LOINC codes generally identify observations, SNOMED codes generally identify conditions
+4. **Handle missing data** - Not all patients have all observations; decide how to handle nulls per model requirements
+5. **Get multiple resource types at once** - `get_patient_resource_type()` accepts a list of resource types
+6. **Check actual data** - Use `get_patient_resource_type()` to see what data a patient actually has
 """
 
 
@@ -570,10 +422,9 @@ parsers that clean and flatten the data for easier consumption.
 ## Resource Types Available
 
 ### Structured Resources
-- **Patient**: Demographics (name, gender, birth date, address, ethnicity, race)
 - **Observation**: Lab values, vital signs, social history (smoking, alcohol), BMI, etc.
-- **Condition**: Diagnoses and medical conditions (coded with SNOMED, ICD-10, etc.)
-- **Procedure**: Procedures performed (coded with SNOMED, CPT, etc.)
+- **Condition**: Diagnoses and medical conditions
+- **Procedure**: Procedures performed
 - **MedicationRequest**: Prescribed medications
 - **MedicationAdministration**: Medications actually administered
 - **Immunization**: Vaccines administered
@@ -583,64 +434,113 @@ parsers that clean and flatten the data for easier consumption.
 - **DiagnosticReport**: Lab reports, imaging reports with text descriptions
 - **DocumentReference**: Clinical notes, discharge summaries, consultation notes
 
+NOTE: Narrative resources are available via `get_patient_narratives()`. They are not included
+in the structured data tools because they are typically very large and may contain extensive
+free-text content.
+
 ## Using the Tools
 
-### For Comprehensive Data
-Use `get_patient_all_structured_data()` to retrieve everything at once:
-```python
-data = get_patient_all_structured_data(patient_id="123")
-# Returns: Markdown-formatted tables with all clinical data
-```
+### For Patient Demographics
+Use `get_patient_demographics(patient_id)` to get a patient's demographics:
+- cohort, given_name, family_name, prefix
+- gender, birth_date, deceased_date
+- race, ethnicity, birth_sex, birth_place
+- address_line, city, state, postal_code
+- marital_status, phone, language
+
+Returns markdown-formatted key-value pairs.
+
+### For Comprehensive Clinical Data
+Use `get_patient_all_structured_data(patient_id)` to retrieve all structured resource types at once:
+- Observation, Condition, Procedure, MedicationRequest, MedicationAdministration, Immunization, CarePlan
+
+Returns markdown-formatted tables organized by resource type.
 
 ### For Specific Resource Types
-Use `get_patient_resource_type()` when you only need one type:
-```python
-observations = get_patient_resource_type(patient_id="123", resource_type="Observation")
-conditions = get_patient_resource_type(patient_id="123", resource_type="Condition")
-# Returns: Markdown-formatted tables
-```
+Use `get_patient_resource_type(patient_id, resource_types_list)` to get one or more specific resource types.
+Note: Takes a LIST of resource types (even if you only want one).
 
-### Output Format
-All patient data tools return **markdown-formatted tables** for easy reading and context efficiency.
+Example:
+- Single type: `get_patient_resource_type("123", ["Observation"])`
+- Multiple types: `get_patient_resource_type("123", ["Observation", "Condition"])`
 
-## Resource-Specific Parsers
+Returns combined markdown-formatted tables with a header for each resource type.
 
-Each resource type has a parser that extracts the most relevant fields:
+### For Narrative Resources
+Use `get_patient_narratives(patient_id)` to get DiagnosticReport and DocumentReference resources.
 
-### Observation Parser
-Extracts:
-- code, code_display (what was measured)
-- value, value_unit (the measurement)
-- date (when measured)
-- category (lab, vital-signs, social-history, etc.)
+Returns markdown-formatted content with narrative text.
 
-### Condition Parser
-Extracts:
-- code, code_display (diagnosis)
-- clinical_status (active, resolved, etc.)
-- onset_date, abatement_date
-- severity
+## Output Format
+All patient data tools return **markdown-formatted content** - either tables or key-value pairs.
 
-### Medication Parser
-Extracts:
-- medication_code, medication_display
-- dosage, route, frequency
-- authored_date (when prescribed)
-- status (active, completed, stopped)
+## Resource-Specific Parser Output
 
-## Common Observation Codes
+Each resource type has a parser that extracts the most clinically relevant fields.
+Here's what you'll actually see in the markdown tables:
 
-- **BMI**: LOINC 39156-5
-- **Body Weight**: LOINC 29463-7
-- **Body Height**: LOINC 8302-2
-- **Smoking Status**: LOINC 72166-2
-- **Blood Pressure**: LOINC 85354-9 (systolic 8480-6, diastolic 8462-4)
-- **Heart Rate**: LOINC 8867-4
-- **Respiratory Rate**: LOINC 9279-1
-- **Body Temperature**: LOINC 8310-5
-- **Oxygen Saturation**: LOINC 2708-6
+### Observation
+Columns:
+- **cohort**: Patient cohort identifier
+- **status**: Observation status (e.g., "final")
+- **category**: Category (e.g., "Vital signs", "Social history", "Survey", "Lab")
+- **code_text**: Human-readable description (e.g., "Body Mass Index", "Tobacco smoking status")
+- **encounter_id**: Associated encounter ID
+- **effective_date**: Date of observation (YYYY-MM-DD)
+- **issued**: Date issued (YYYY-MM-DD)
+- **value_with_unit**: Combined value and unit (e.g., "29.31 kg/m2", "Ex-smoker (finding)")
 
-## Common Condition Codes (SNOMED)
+### Condition
+Columns:
+- **cohort**: Patient cohort identifier
+- **clinical_status**: Status code (e.g., "active", "resolved")
+- **verification_status**: Verification status code
+- **category**: Condition category
+- **condition_text**: Human-readable diagnosis (e.g., "Chronic intractable migraine without aura")
+- **condition_code**: SNOMED code
+- **condition_system**: Code system URL
+- **encounter_id**: Associated encounter ID
+- **onset_date**: Date condition started (YYYY-MM-DD)
+- **recorded_date**: Date recorded (YYYY-MM-DD)
+
+### MedicationRequest
+Columns:
+- **cohort**: Patient cohort identifier
+- **status**: Status (e.g., "active", "stopped")
+- **intent**: Intent (e.g., "order")
+- **category**: Category (e.g., "Community")
+- **medication**: Medication name (e.g., "Naproxen sodium 220 MG Oral Tablet")
+- **encounter_id**: Associated encounter ID
+- **authored_on**: Date prescribed (YYYY-MM-DD)
+- **dosage_text**: Dosage instructions text
+- **as_needed**: Whether taken as needed (True/False)
+- **dose**: Dose amount with unit (e.g., "50 mg")
+- **timing**: Frequency (e.g., "2x per 1 day(s)")
+
+### Procedure
+Columns:
+- **cohort**: Patient cohort identifier
+- **status**: Status (e.g., "completed")
+- **procedure_text**: Human-readable procedure name
+- **procedure_code**: Procedure code
+- **encounter_id**: Associated encounter ID
+- **performed_start**: Start date (YYYY-MM-DD)
+- **performed_end**: End date (YYYY-MM-DD)
+- **location**: Location name
+
+## Common LOINC Codes for Observations
+
+- **BMI**: 39156-5
+- **Body Weight**: 29463-7
+- **Body Height**: 8302-2
+- **Smoking Status**: 72166-2
+- **Blood Pressure**: 85354-9 (systolic 8480-6, diastolic 8462-4)
+- **Heart Rate**: 8867-4
+- **Respiratory Rate**: 9279-1
+- **Body Temperature**: 8310-5
+- **Oxygen Saturation**: 2708-6
+
+## Common SNOMED Codes for Conditions
 
 - **Diabetes**: 44054006
 - **Hypertension**: 38341003
@@ -649,8 +549,12 @@ Extracts:
 - **Asthma**: 195967001
 - **Coronary Artery Disease**: 53741008
 
-Use `get_patient_resource_type(patient_id, "Observation")` to see what observations
-exist for a specific patient. Common observations include BMI, smoking status, vital signs, and lab values.
+## Tips
+
+- Match observations using **code_text** (human-readable) rather than trying to extract LOINC codes
+- Extract numeric values from **value_with_unit** column (parse out the number)
+- Match conditions using **condition_text** or **condition_code** (SNOMED)
+- Check the **category** column to filter observations (e.g., only "Vital signs")
 """
 
 
@@ -662,51 +566,11 @@ def get_models_readme() -> str:
     return """
 # Predictive Model Execution
 
-Models are packaged as Docker containers and executed in isolated environments.
-
-## Model Structure
-
-Each model includes:
-- **model_metadata.json**: Title, description, authors
-- **examples.json**: Example input records showing exact format
-- **README.md**: Detailed documentation about features, output, and usage
-- **predict script**: Executable that reads input.json and writes output.json
-
-## Input/Output Format
-
-Models communicate via JSON files:
-
-### Input (what you provide)
-```json
-[
-  {
-    "feature1": value1,
-    "feature2": value2,
-    ...
-  },
-  {
-    "feature1": value3,
-    "feature2": value4,
-    ...
-  }
-]
-```
-
-### Output (what model returns)
-```json
-{
-  "predictions": [
-    {
-      "predicted_field1": value1,
-      "predicted_field2": value2,
-      ...
-    },
-    ...
-  ],
-  "stdout": "Model execution logs...",
-  "stderr": "Warnings or errors..."
-}
-```
+Models are available for execution via the model_server, which
+executes a specific model on prepared input data. Useful tools:
+- `list_available_models()` - See what models are available
+- `get_model_metadata(image_tag)` - Get model details including README with feature requirements and examples
+- `execute_model(image_tag, input_data)` - Execute a model with prepared input data
 
 ## Feature Requirements
 
@@ -745,7 +609,7 @@ Check the model's README and examples for guidance.
 
 ## Model Output Interpretation
 
-Common output types:
+Potential output types:
 - **Classification**: Predicted class label and/or probability
 - **Regression**: Predicted continuous value (risk score, survival time, etc.)
 - **Survival**: Hazard ratios, survival probabilities at time points
