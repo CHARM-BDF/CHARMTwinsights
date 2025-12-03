@@ -272,7 +272,21 @@ For development purposes, each service is exposed to the localhost on independen
 - model_server: localhost:8004
 - mcp_server: localhost:8006
 
-*The HAPI server in particular is useful for browsing FHIR data and testing ad-hoc queries.*
+### Accessing HAPI FHIR Server
+
+**Development/Demo Mode (default):**
+- HAPI UI: http://localhost:8080/fhir
+- Port exposed via `docker-compose.override.yaml` 
+- Useful for browsing FHIR data and testing ad-hoc queries
+
+**Production Mode:**
+```bash
+# Skip override file to prevent external HAPI access
+docker compose -f docker-compose.yml up -d
+```
+- HAPI port not exposed externally for security
+- FHIR data accessible only through controlled router endpoints at `/stats`
+- Internal services (stat servers, synthea) can still access HAPI directly
 
 Individual services can be rapidly iterated on even if they depend on others.
 After the application has been initialized and databases populated, a typical workflow would be:

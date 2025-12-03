@@ -1,0 +1,307 @@
+# bdf.yaml - BDF Knowledgebase Metadata for CHARMTwinsight
+# This file describes your tool for the ARPA-H BDF toolbox directory
+
+# ==============================================================================
+# VERSION
+# ==============================================================================
+# Semantic version of your tool (v + major.minor.patch format)
+# Examples: v0.1.0, v1.2.3, v2.0.0-beta
+version: v0.1.0
+
+# ==============================================================================
+# TOOL INFORMATION
+# ==============================================================================
+tool:
+  # Human-readable name of your tool
+  name: CHARMTwinsight
+  
+  # URL to the source code repository
+  repo_url: https://github.com/CHARM-BDF/CHARMTwinsights
+  
+  # URL to the tool's main homepage (can be same as repo_url or a dedicated site)
+  tool_homepage: https://github.com/CHARM-BDF/CHARMTwinsights
+  
+  # URL to main documentation (README, docs site, wiki, etc.)
+  documentation_url: https://github.com/CHARM-BDF/CHARMTwinsights/blob/main/README.md
+  
+  # Type of tool - REQUIRED, must be one of:
+  # - CLI: Command-line interface tool
+  # - DatabasePortal: Web interface to query/browse a database
+  # - DesktopApp: Desktop application
+  # - Library: Software library/package
+  # - Ontology: Ontology or vocabulary
+  # - Plugin: Plugin for another tool
+  # - Script: Single script or small collection
+  # - SPARQLEndpoint: SPARQL query endpoint
+  # - Suite: Collection of tools working together
+  # - WebApp: Web-based application
+  # - WebAPI: Web API/service
+  # - WebServiceSOAP: SOAP-based web service
+  # - Workbench: Integrated development/analysis workbench
+  # - Workflow: Workflow/pipeline tool
+  # - Notebook: Jupyter notebook or similar
+  # - AI/MLModel: AI or machine learning model
+  # - KnowledgeGraph: Knowledge graph system
+  # - DataCatalog: Data catalog/registry
+  tool_type: Suite
+
+# ==============================================================================
+# LARGE LANGUAGE MODEL (LLM) USAGE
+# ==============================================================================
+llm:
+  # Does your tool use LLMs? (true/false)
+  usesLlm: false
+  
+  # Which LLM providers are supported? (empty list if usesLlm: false)
+  # Options include: openai, anthropic, cohere, google, huggingface, ollama, etc.
+  modelsSupported: []
+  
+  # Which LLM providers are required? (empty list if usesLlm: false)
+  modelsRequired: []
+  
+  # Can users bring their own API keys? (true/false)
+  # If false, keys are provided by the tool
+  bringOwnKey: false
+
+# ==============================================================================
+# INPUT DATA SOURCES
+# ==============================================================================
+# List all types of data your tool accepts as input
+# Each input should describe one data type/format combination
+input:
+  # INPUT 1: Demographics for synthetic data generation
+  - name: Patient Demographics for Synthea FHIR Generation
+    dataCategory: demographics
+    dataClass: structured
+    
+    dataType: Demographics
+    
+    format:
+      - json
+    
+    dataStandard:
+      - unknown
+    
+    proprietary: false
+    
+    source: User-provided generation parameters (demographics, cohort settings, temporal scope)
+  
+  
+  # INPUT 2: Predictive model registration data
+  - name: Model Registration Metadata
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Model Metadata
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: User-provided model container images and metadata
+  
+  # INPUT 4: Features for predictive models
+  - name: Model Input Features
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Clinical Features
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: User-provided feature vectors matching model input specifications
+  
+
+
+# ==============================================================================
+# OUTPUT DATA PRODUCTS
+# ==============================================================================
+# List all types of data your tool produces as output
+output:
+  # OUTPUT 1: Synthetic FHIR patient data
+  - name: Synthetic FHIR Patient Data
+    dataCategory: clinical    
+    dataClass: structured
+    dataType: Electronic Health Records (FHIR)
+    format:
+      - json
+    dataStandard:
+      - FHIR
+    
+    proprietary: false
+    
+    source: Generated via Synthea engine with configurable demographics
+
+  # OUTPUT 2: Generation job status and metadata
+  - name: Patient Generation Job Status
+    dataCategory: job-status
+    dataClass: structured
+    dataType: Job Metadata
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: Asynchronous job tracking system for synthetic patient generation
+
+  # OUTPUT 3: FHIR patient query results
+  - name: Patient FHIR Resource Collections
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Electronic Health Records
+    format:
+      - json
+    dataStandard:
+      - FHIR
+    proprietary: false
+    source: HAPI FHIR server queries (patients, cohorts, and related resources)
+
+  # OUTPUT 4: Predictive model outputs
+  - name: Hosted Model Outputs
+    dataCategory: clinical
+    dataClass: structured
+    dataType: Risk Scores
+    format:
+      - json
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: Registered containerized predictive models (e.g., Cox PH COPD model)
+
+  # OUTPUT 5: Statistical visualizations
+  - name: Clinical Data Visualizations
+    dataCategory: clinical
+    dataClass: image
+    dataType: Statistical Graphics
+    format:
+      - images
+    dataStandard:
+      - unknown
+    proprietary: false
+    source: Python-based visualization endpoints for observations, conditions, procedures, medications, and diagnostics
+
+# ==============================================================================
+# COLLABORATIONS
+# ==============================================================================
+# List any other BDF tools this tool integrates with or depends on
+# Leave as empty list [] if no direct collaborations
+collaborations:
+  - name: FHIR-HOSE
+    tools: 
+      - FHIR-HOSE
+    collaboration_purpose: FHIR-HOSE has the ability to call TWINSight-hosted models and display results
+    description: FHIR-HOSE has the ability to call TWINSight-hosted models and display results
+
+# ==============================================================================
+# DOMAINS
+# ==============================================================================
+# Application domains or use cases (list of strings)
+# Be specific about what problems/domains your tool addresses
+domains:
+  - Synthetic Data Generation (FHIR)
+  - Synthetic Data Storage (FHIR)
+  - Clinical Predictive Analytics
+  - Framework-agnostic model hosting
+
+# ==============================================================================
+# CREDIT / CONTRIBUTORS
+# ==============================================================================
+# List people/organizations who should receive credit
+# At least one entry required
+credit:
+  - name: "Shawn O'Neil"  # UPDATE WITH ACTUAL NAMES/TEAM
+    # Role - must be one of:
+    # - Developer: Wrote the code
+    # - Maintainer: Maintains the project
+    # - Provider: Provides the service/hosting
+    # - Documentor: Wrote documentation
+    # - Contributor: Contributed to the project
+    # - Support: Provides user support
+    # - PrimaryContact: Main point of contact
+    role: Developer
+    org: University of North Carolina at Chapel Hill  # UPDATE AS NEEDED
+    url: https://www.med.unc.edu/genetics/directory/shawn-oneil-phd/
+  
+  - name: Chang Sun 
+    role: Developer
+    org: Maastricht University
+    url: https://www.maastrichtuniversity.nl/c-sun
+
+  - name: Anas Elghafari
+    role: Developer
+    org: Maastricht University
+    url: https://cris.maastrichtuniversity.nl/en/persons/anas-elghafari/
+
+  - name: Michele Esposito
+    role: Developer
+    org: Maastricht University
+    url: https://www.maastrichtuniversity.nl/m-esposito
+
+  - name: Michel Dumontier
+    role: Support
+    org: Maastricht University
+    url: https://www.maastrichtuniversity.nl/m-esposito
+
+# ==============================================================================
+# MATURITY LEVEL
+# ==============================================================================
+# Technology Readiness Level (1-9 scale based on NASA TRL)
+# 1: Basic principles observed and reported
+# 2: Technology concept and/or application formulated
+# 3: Analytical and experimental critical function/proof of concept
+# 4: Component and/or breadboard validation in lab
+# 5: Component validation in relevant environment
+# 6: System/subsystem model demonstration in relevant environment
+# 7: System prototype demonstration in operational environment
+# 8: Actual system completed and qualified through test and demonstration
+# 9: Actual system proven through successful operations
+maturity:
+  beginning_maturity: 3  # UPDATE: Where did you start?
+  current_maturity: 6    # UPDATE: Where are you now?
+
+# ==============================================================================
+# LICENSE
+# ==============================================================================
+# Software license information
+license:
+  # License type - must be one of the SPDX license identifiers:
+  # Common open source: MIT, Apache-2.0, GPL-3.0, BSD-3-Clause, GPL-2.0, LGPL-3.0
+  # Creative Commons: CC-BY-4.0, CC-BY-SA-4.0, CC0-1.0
+  # Special: Proprietary, Other, "Not licensed", Freeware
+  # See full list: https://spdx.org/licenses/
+  # 
+  # ⚠️ ACTION REQUIRED: Add a LICENSE file to your repo!
+  license_type: Not licensed  # CHANGE THIS after adding LICENSE file
+  
+  # URL to the license file or license info page
+  link: https://github.com/CHARM-BDF/CHARMTwinsights  # UPDATE to LICENSE file URL
+
+# ==============================================================================
+# TARGET USERS
+# ==============================================================================
+# Who is this tool designed for?
+target_users:
+  # Primary user type - REQUIRED
+  primary_user:
+    # User type - must be one of:
+    # - patient: Patients/consumers
+    # - clinician: Healthcare providers
+    # - researcher: Researchers/scientists
+    # - site-admin-prepping-ehr-extracts: IT staff preparing data
+    # - data-manager: Data management professionals
+    # - data-curator: Data curation specialists
+    user_type: researcher
+    
+    # Technical literacy required (list) - must be from:
+    # - novice: Little to no technical background
+    # - intermediate: Some technical skills (basic coding, tools usage)
+    # - advanced: Strong technical skills
+    # - expert: Deep technical expertise
+    technical_literacy_level:
+      - intermediate
+      - advanced
+    
+    # Biomedical literacy required (list) - same options as technical
+    biomedical_literacy_level:
+      - intermediate
+      - advanced
