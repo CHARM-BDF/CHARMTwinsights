@@ -15,7 +15,7 @@
     - [5. Stopping and Cleaning Up](#5-stopping-and-cleaning-up)
 4. [Troubleshooting](#troubleshooting)
 5. [Model Development](#model-development)
-6. [MCB Server](#mcp-server)
+6. [MCP Server](#mcp-server)
 7. [Development](#development)
     - [Recommendations](#recommendations)
     - [Iterating](#iterating)
@@ -229,22 +229,20 @@ CHARMTwinsights provides templates and tools to help developers create new machi
 
 CHARMTwinsights includes a Model Context Protocol (MCP) server that allows AI assistants to interact with the platform programmatically.
 
-Supported tools:
+The MCP server is automatically started with `docker compose up` and runs on port 8006.
 
-- **Synthetic Data Generation**: Create patient cohorts, monitor job progress, manage cohorts
-- **Patient Data Access**: Search patients, retrieve patient records
-- **Predictive Models**: List models, view model documentation, execute predictions
+**Available capabilities:**
+- **Patient Data Access**: Search patients, retrieve demographics, get structured clinical data (Observations, Conditions, Procedures, Medications), access narrative reports
+- **Predictive Models**: List available models, view model documentation and requirements, execute predictions
 
-Example `claude_desktop_config.json`:
+**Example configuration** for Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "charmtwinsight": {
-      "url": "http://localhost:8006",
-      "transport": {
-        "type": "sse"
-      }
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8006/mcp"]
     }
   }
 }

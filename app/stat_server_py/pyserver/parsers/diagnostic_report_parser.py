@@ -131,3 +131,4 @@ class DiagnosticReportParser(BaseParser):
                         return f"[Error decoding report: {str(e)}]"
         return None
 
+

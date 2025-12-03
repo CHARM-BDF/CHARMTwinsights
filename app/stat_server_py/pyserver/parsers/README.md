@@ -83,3 +83,4 @@ class ConditionParser:
 5. **Null-safe**: Handle missing fields gracefully
 6. **Date formatting**: Simplify dates to YYYY-MM-DD format
 
+
