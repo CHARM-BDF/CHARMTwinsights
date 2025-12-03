@@ -40,6 +40,21 @@ services:
         condition: service_healthy
 
 
+  mcp_server:
+    build: ./mcp_server
+    depends_on:
+      stat_server_py:
+        condition: service_healthy
+      synthea_server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+
   stat_server_py:
     build: ./stat_server_py
     depends_on:

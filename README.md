@@ -15,10 +15,11 @@
     - [5. Stopping and Cleaning Up](#5-stopping-and-cleaning-up)
 4. [Troubleshooting](#troubleshooting)
 5. [Model Development](#model-development)
-6. [Development](#development)
+6. [MCP Server](#mcp-server)
+7. [Development](#development)
     - [Recommendations](#recommendations)
     - [Iterating](#iterating)
-7. [Miscellaneous](#miscellaneous)
+8. [Miscellaneous](#miscellaneous)
 
 ## Overview
 
@@ -54,6 +55,8 @@ CHARMTwinsight is designed as a microservices architecture managed with `docker 
 **`model_server`**: REST API hosting and serving arbitrary ML and statistical models packaged as Docker containers. 
 
 **`model_server_db`**: MongoDB database for storing metadata on hosted models.
+
+**`mcp_server`**: Model Context Protocol (MCP) server for cohort generation, patient querying, and model access
 
 
 ## Installation and Usage
@@ -222,6 +225,31 @@ CHARMTwinsights provides templates and tools to help developers create new machi
 - **Working example:** [`model-templates/examples/simple-classifier/`](model-templates/examples/simple-classifier/)
 - **Dockerfile validator:** [`model-templates/validate-dockerfile.py`](model-templates/validate-dockerfile.py)
 
+## MCP Server
+
+CHARMTwinsights includes a Model Context Protocol (MCP) server that allows AI assistants to interact with the platform programmatically.
+
+The MCP server is automatically started with `docker compose up` and runs on port 8006.
+
+**Available capabilities:**
+- **Patient Data Access**: Search patients, retrieve demographics, get structured clinical data (Observations, Conditions, Procedures, Medications), access narrative reports
+- **Predictive Models**: List available models, view model documentation and requirements, execute predictions
+
+**Example configuration** for Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "charmtwinsight": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8006/mcp"]
+    }
+  }
+}
+```
+
+For more information see [`app/mcp_server/README.md`](app/mcp_server/README.md).
+
 ## Development
 
 ### Recommendations
@@ -242,6 +270,7 @@ For development purposes, each service is exposed to the localhost on independen
 - stat_server_r: localhost:8002
 - synthea_server: localhost:8003
 - model_server: localhost:8004
+- mcp_server: localhost:8006
 
 ### Accessing HAPI FHIR Server
 
