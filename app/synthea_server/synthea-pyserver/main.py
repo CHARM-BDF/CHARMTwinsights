@@ -32,6 +32,9 @@ jobs_lock = threading.Lock()
 # Demographics data cache
 demographics_data = None
 
+# Allowed datatype values for validation
+ALLOWED_DATATYPES = {"external", "synthetic"}
+
 class JobStatus:
     def __init__(self, job_id: str, request_data: dict):
         self.id = job_id
@@ -374,6 +377,170 @@ def apply_tags(resource, tags: dict[str, str] = None):
         for contained in resource["contained"]:
             apply_tags(contained, tags)
 
+
+def validate_datatype(datatype: str) -> tuple[bool, str]:
+    """Validate datatype is in allowed set
+    
+    Args:
+        datatype: The datatype string to validate
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if datatype not in ALLOWED_DATATYPES:
+        return False, f"Invalid datatype '{datatype}'. Must be one of: {', '.join(sorted(ALLOWED_DATATYPES))}"
+    return True, ""
+
+
+def validate_fhir_bundle(bundle: dict) -> tuple[bool, str]:
+    """Basic validation of FHIR bundle structure
+    
+    Args:
+        bundle: Dictionary representing a FHIR Bundle
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    if not isinstance(bundle, dict):
+        return False, "Bundle must be a dictionary"
+    
+    if bundle.get("resourceType") != "Bundle":
+        return False, f"Invalid resourceType: expected 'Bundle', got '{bundle.get('resourceType')}'"
+    
+    if "entry" not in bundle or not isinstance(bundle.get("entry"), list):
+        return False, "Bundle must contain an 'entry' array"
+    
+    if len(bundle.get("entry", [])) == 0:
+        return False, "Bundle must contain at least one entry"
+    
+    return True, ""
+
+
+def prefix_patient_ids(bundle: dict, prefix: str = "ext-") -> dict:
+    """Prefix all patient IDs and update all references throughout the bundle
+    
+    This function:
+    1. Identifies all Patient resources and prefixes their IDs
+    2. Updates all references to those patients throughout the bundle
+    
+    Args:
+        bundle: Dictionary representing a FHIR Bundle
+        prefix: Prefix to add to patient IDs (default: "ext-")
+        
+    Returns:
+        Modified bundle with prefixed patient IDs and updated references
+    """
+    if bundle.get("resourceType") != "Bundle":
+        logger.warning("prefix_patient_ids called on non-bundle resource")
+        return bundle
+    
+    # Create a copy to avoid modifying the original
+    bundle = json.loads(json.dumps(bundle))
+    
+    # First pass: collect original patient IDs and their prefixed versions
+    patient_id_map = {}
+    
+    for entry in bundle.get("entry", []):
+        resource = entry.get("resource", {})
+        if resource.get("resourceType") == "Patient":
+            original_id = resource.get("id")
+            if original_id:
+                # Only prefix if not already prefixed
+                if not original_id.startswith(prefix):
+                    new_id = f"{prefix}{original_id}"
+                    patient_id_map[original_id] = new_id
+                    resource["id"] = new_id
+                    logger.debug(f"Prefixed patient ID: {original_id} -> {new_id}")
+    
+    # Second pass: update all references to patients
+    def update_references(obj):
+        """Recursively update patient references in a nested structure"""
+        if isinstance(obj, dict):
+            # Check for reference fields
+            if "reference" in obj and isinstance(obj["reference"], str):
+                ref = obj["reference"]
+                # Handle various reference formats: "Patient/123" or just "123"
+                if ref.startswith("Patient/"):
+                    patient_id = ref[8:]  # Remove "Patient/" prefix
+                    if patient_id in patient_id_map:
+                        obj["reference"] = f"Patient/{patient_id_map[patient_id]}"
+                        logger.debug(f"Updated reference: {ref} -> {obj['reference']}")
+                elif ref in patient_id_map:
+                    # Direct ID reference without "Patient/" prefix
+                    obj["reference"] = f"Patient/{patient_id_map[ref]}"
+                    logger.debug(f"Updated reference: {ref} -> {obj['reference']}")
+            
+            # Recurse into nested dictionaries
+            for key, value in obj.items():
+                if isinstance(value, (dict, list)):
+                    update_references(value)
+        
+        elif isinstance(obj, list):
+            # Recurse into lists
+            for item in obj:
+                if isinstance(item, (dict, list)):
+                    update_references(item)
+    
+    # Update references in all entries
+    for entry in bundle.get("entry", []):
+        update_references(entry.get("resource", {}))
+    
+    return bundle
+
+
+def convert_to_transaction_bundle(bundle: dict) -> dict:
+    """Convert a bundle to transaction type for atomic updates
+    
+    If the bundle is already a transaction or batch bundle, it's returned as-is.
+    Otherwise, it's converted to a transaction bundle with appropriate request methods.
+    
+    Args:
+        bundle: Dictionary representing a FHIR Bundle
+        
+    Returns:
+        Bundle with type "transaction" and appropriate request methods
+    """
+    if bundle.get("resourceType") != "Bundle":
+        logger.warning("convert_to_transaction_bundle called on non-bundle resource")
+        return bundle
+    
+    # Create a copy to avoid modifying the original
+    bundle = json.loads(json.dumps(bundle))
+    
+    current_type = bundle.get("type")
+    
+    # If already transaction or batch, return as-is
+    if current_type in ("transaction", "batch"):
+        logger.debug(f"Bundle is already type '{current_type}', no conversion needed")
+        return bundle
+    
+    # Convert to transaction type
+    bundle["type"] = "transaction"
+    logger.info(f"Converting bundle from type '{current_type}' to 'transaction'")
+    
+    # Add request methods to each entry
+    for entry in bundle.get("entry", []):
+        resource = entry.get("resource", {})
+        resource_type = resource.get("resourceType")
+        resource_id = resource.get("id")
+        
+        if "request" not in entry:
+            # Use conditional update (PUT with identifier) to support merges
+            # If resource has an ID, use PUT; otherwise use POST
+            if resource_id:
+                entry["request"] = {
+                    "method": "PUT",
+                    "url": f"{resource_type}/{resource_id}"
+                }
+            else:
+                entry["request"] = {
+                    "method": "POST",
+                    "url": resource_type
+                }
+            
+            logger.debug(f"Added request method to {resource_type}: {entry['request']['method']} {entry['request']['url']}")
+    
+    return bundle
 
 
 def fetch_group_by_id(hapi_url, group_id):
@@ -1920,6 +2087,170 @@ async def generate_download_synthetic_patients(
         return JSONResponse(status_code=500, content={"error": f"Error: {e}"})
 
 
+class ExternalFHIRRequest(BaseModel):
+    bundle: dict = Field(..., description="FHIR Bundle containing patient data")
+    cohort_id: str = Field("external", description="Cohort identifier for organizing data")
+    datatype: str = Field("external", description="Data type classification (external or synthetic)")
+    
+    @field_validator('cohort_id')
+    @classmethod
+    def validate_cohort_id(cls, v: str) -> str:
+        """Validate that cohort_id follows FHIR resource ID rules"""
+        # FHIR resource ID pattern: [A-Za-z0-9\-\.]{1,64}
+        fhir_id_pattern = r'^[A-Za-z0-9\-\.]{1,64}$'
+        
+        if not re.match(fhir_id_pattern, v):
+            raise ValueError(
+                f"cohort_id '{v}' is not a valid FHIR resource ID. "
+                f"Must contain only letters, numbers, hyphens, and periods, "
+                f"and be 1-64 characters long. Underscores are not allowed."
+            )
+        return v
+
+
+@app.post("/ingest-external-fhir", response_class=JSONResponse)
+async def ingest_external_fhir(request: ExternalFHIRRequest):
+    """
+    Ingest FHIR bundle from external source (e.g., FHIR-HOSE mobile app).
+    
+    This endpoint accepts a FHIR Bundle, prefixes patient IDs to prevent conflicts,
+    applies appropriate tags, and stores the data in HAPI FHIR for cohort management.
+    
+    Args:
+        request: ExternalFHIRRequest containing bundle, cohort_id, and datatype
+        
+    Returns:
+        JSON response with success status, patient IDs, and cohort information
+        
+    Raises:
+        HTTPException: If validation fails or HAPI returns an error
+    """
+    hapi_url = "http://hapi:8080/fhir"
+    
+    try:
+        # Validate datatype
+        is_valid_datatype, datatype_error = validate_datatype(request.datatype)
+        if not is_valid_datatype:
+            raise HTTPException(status_code=400, detail=datatype_error)
+        
+        # Validate bundle structure
+        is_valid_bundle, bundle_error = validate_fhir_bundle(request.bundle)
+        if not is_valid_bundle:
+            raise HTTPException(status_code=400, detail=bundle_error)
+        
+        logger.info(f"Processing external FHIR bundle for cohort '{request.cohort_id}' with datatype '{request.datatype}'")
+        
+        # Prefix patient IDs to prevent conflicts
+        prefixed_bundle = prefix_patient_ids(request.bundle, prefix="ext-")
+        
+        # Convert to transaction bundle for atomic updates
+        transaction_bundle = convert_to_transaction_bundle(prefixed_bundle)
+        
+        # Apply tags
+        tagset = {
+            "urn:charm:source": "external",
+            "urn:charm:datatype": request.datatype,
+            "urn:charm:cohort": request.cohort_id,
+            "urn:charm:created": datetime.now().isoformat()
+        }
+        apply_tags(transaction_bundle, tagset)
+        
+        # Extract patient IDs before posting (for cohort management)
+        patient_ids = set()
+        for entry in transaction_bundle.get("entry", []):
+            resource = entry.get("resource", {})
+            if resource.get("resourceType") == "Patient":
+                patient_id = resource.get("id")
+                if patient_id:
+                    patient_ids.add(patient_id)
+        
+        logger.info(f"Found {len(patient_ids)} patient(s) in bundle: {list(patient_ids)[:5]}{'...' if len(patient_ids) > 5 else ''}")
+        
+        # Post bundle to HAPI FHIR
+        bundle_size = len(json.dumps(transaction_bundle))
+        timeout = max(30, min(300, bundle_size / 5000))
+        
+        logger.info(f"Posting transaction bundle (size: {bundle_size/1024:.1f}KB) with timeout {timeout:.1f}s")
+        
+        session = requests.Session()
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST"]
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Post to base FHIR URL for transaction bundles
+        r = session.post(
+            hapi_url,
+            json=transaction_bundle,
+            headers={"Content-Type": "application/fhir+json"},
+            timeout=timeout
+        )
+        
+        # Check for errors
+        if r.status_code not in [200, 201]:
+            error_body = r.text[:1000] if len(r.text) > 1000 else r.text
+            logger.error(f"HAPI FHIR error: Status {r.status_code}, Body: {error_body}")
+            return JSONResponse(
+                status_code=r.status_code,
+                content={
+                    "success": False,
+                    "error": "HAPI FHIR validation error",
+                    "status_code": r.status_code,
+                    "details": error_body
+                }
+            )
+        
+        logger.info(f"Successfully posted bundle to HAPI FHIR")
+        
+        # Update cohort Group resource
+        if patient_ids:
+            try:
+                upsert_group(hapi_url, request.cohort_id, patient_ids, tagset)
+                logger.info(f"Updated cohort '{request.cohort_id}' with {len(patient_ids)} patient(s)")
+            except Exception as e:
+                logger.error(f"Failed to update cohort group: {str(e)}")
+                # Continue - bundle was successfully posted even if group update failed
+        
+        return {
+            "success": True,
+            "message": f"Successfully ingested external FHIR data",
+            "cohort_id": request.cohort_id,
+            "datatype": request.datatype,
+            "patient_count": len(patient_ids),
+            "patient_ids": list(patient_ids),
+            "tags_applied": tagset
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except requests.Timeout:
+        logger.error(f"Timeout posting bundle to HAPI server")
+        raise HTTPException(
+            status_code=504,
+            detail=f"Timeout posting bundle to HAPI server after {timeout} seconds"
+        )
+    except requests.RequestException as e:
+        logger.error(f"Error communicating with HAPI server: {str(e)}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Error communicating with HAPI server: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error ingesting external FHIR data: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

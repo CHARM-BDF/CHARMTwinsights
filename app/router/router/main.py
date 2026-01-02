@@ -7,6 +7,7 @@ import httpx
 from .routers import synthea
 from .routers import modeling
 from .routers import stat_server_py
+from .routers import ingestion
 from .config import settings
 
 logging.basicConfig(
@@ -34,6 +35,7 @@ app.add_middleware(
 app.include_router(modeling.router)
 app.include_router(synthea.router)
 app.include_router(stat_server_py.router)
+app.include_router(ingestion.router)
 
 @app.get("/health")
 async def health_check():

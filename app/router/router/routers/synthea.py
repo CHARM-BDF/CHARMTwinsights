@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Body
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -343,5 +343,4 @@ async def get_cities_for_state(state: str):
     except httpx.RequestError as e:
         logger.error(f"Error contacting Synthea backend (cities): {e}")
         raise HTTPException(status_code=500, detail="Synthea server unreachable")
-
 
