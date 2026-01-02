@@ -22,6 +22,8 @@ Thumbs.db
 tools/output/
 app/hapi/postgres_data/
 scripts/mimic_data/
+app/atlas/postgres_data/
+app/atlas/vocabulary_files/
 
 # rstudio stuff
 *.Rproj*
