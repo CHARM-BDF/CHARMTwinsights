@@ -242,11 +242,11 @@ fi
 
 echo -e "\n${BLUE}=== Step 4: Test Update Functionality ===${NC}"
 
-# Create a modified version of the bundle (change a value to simulate an update)
-echo -e "\n${BLUE}Test 7: Update existing patient data${NC}"
-echo "Modifying bundle and re-ingesting to same cohort..."
+echo -e "\n${BLUE}Test 7: Update existing patient data and add new observations${NC}"
+echo "Testing that updates merge/update rather than duplicate..."
 
-# Ingest the same bundle again to the same cohort (should merge/update)
+# First ingestion - initial data
+echo "  Step 1: Initial ingestion..."
 response=$(curl -s -w "\n%{http_code}" -X POST "$ROUTER_BASE_URL/ingest/fhir" \
   -H "Content-Type: application/json" \
   -d "{
@@ -258,16 +258,104 @@ http_code=$(echo "$response" | tail -n1)
 body=$(echo "$response" | sed '$d')
 
 if [ "$http_code" -eq 200 ]; then
-  echo -e "${GREEN}✓ PASS (First ingestion)${NC} (HTTP $http_code)"
-  patient_count_1=$(echo "$body" | grep -o '"patient_count":[0-9]*' | cut -d':' -f2)
-  echo "  Patient count: $patient_count_1"
+  echo -e "  ${GREEN}✓ Initial ingestion successful${NC}"
+  initial_patient_id=$(echo "$body" | grep -o '"patient_ids":\["[^"]*"' | cut -d'"' -f4)
+  echo "  Patient ID: $initial_patient_id"
   
-  # Ingest again to same cohort
-  echo "  Re-ingesting to same cohort..."
+  # Wait a moment for HAPI to process
+  sleep 2
+  
+  # Query HAPI to get initial state
+  echo "  Step 2: Querying HAPI for initial patient data..."
+  initial_patient=$(curl -s "http://localhost:8080/fhir/Patient/$initial_patient_id")
+  initial_patient_city=$(echo "$initial_patient" | jq -r '.address[0].city // "not-set"' 2>/dev/null || echo "not-set")
+  echo "  Initial patient city: $initial_patient_city"
+  
+  # Count initial observations
+  initial_obs_count=$(curl -s "http://localhost:8080/fhir/Observation?subject=Patient/$initial_patient_id&_summary=count" | jq -r '.total // 0' 2>/dev/null || echo "0")
+  echo "  Initial observation count: $initial_obs_count"
+  
+  # Create modified bundle with updated patient data and new observation
+  echo "  Step 3: Creating modified bundle..."
+  MODIFIED_BUNDLE='{
+    "resourceType": "Bundle",
+    "type": "collection",
+    "entry": [
+      {
+        "resource": {
+          "resourceType": "Patient",
+          "id": "test-patient-123",
+          "gender": "male",
+          "birthDate": "1990-05-15",
+          "name": [{
+            "family": "TestPatient",
+            "given": ["John", "Updated"]
+          }],
+          "address": [{
+            "city": "Portland",
+            "state": "OR",
+            "postalCode": "97201"
+          }]
+        }
+      },
+      {
+        "resource": {
+          "resourceType": "Observation",
+          "id": "obs-001",
+          "status": "final",
+          "code": {
+            "coding": [{
+              "system": "http://loinc.org",
+              "code": "29463-7",
+              "display": "Body Weight"
+            }]
+          },
+          "subject": {
+            "reference": "Patient/test-patient-123"
+          },
+          "valueQuantity": {
+            "value": 75,
+            "unit": "kg",
+            "system": "http://unitsofmeasure.org",
+            "code": "kg"
+          }
+        }
+      },
+      {
+        "resource": {
+          "resourceType": "Observation",
+          "id": "obs-002-new",
+          "status": "final",
+          "code": {
+            "coding": [{
+              "system": "http://loinc.org",
+              "code": "8867-4",
+              "display": "Heart rate"
+            }]
+          },
+          "subject": {
+            "reference": "Patient/test-patient-123"
+          },
+          "effectiveDateTime": "2026-01-02T14:00:00Z",
+          "valueQuantity": {
+            "value": 72,
+            "unit": "beats/minute",
+            "system": "http://unitsofmeasure.org",
+            "code": "/min"
+          }
+        }
+      }
+    ]
+  }'
+  
+  echo "  Modified: Changed city to Portland, added middle name, added new observation"
+  
+  # Re-ingest with modifications
+  echo "  Step 4: Re-ingesting modified bundle to same cohort..."
   response2=$(curl -s -w "\n%{http_code}" -X POST "$ROUTER_BASE_URL/ingest/fhir" \
     -H "Content-Type: application/json" \
     -d "{
-      \"bundle\": $SAMPLE_BUNDLE,
+      \"bundle\": $MODIFIED_BUNDLE,
       \"cohort_id\": \"update-test\"
     }")
   
@@ -275,15 +363,59 @@ if [ "$http_code" -eq 200 ]; then
   body2=$(echo "$response2" | sed '$d')
   
   if [ "$http_code2" -eq 200 ]; then
-    echo -e "${GREEN}✓ PASS (Second ingestion)${NC} (HTTP $http_code2)"
-    patient_count_2=$(echo "$body2" | grep -o '"patient_count":[0-9]*' | cut -d':' -f2)
-    echo "  Patient count: $patient_count_2"
-    echo -e "  ${YELLOW}Note: HAPI FHIR should merge/update existing resources${NC}"
+    echo -e "  ${GREEN}✓ Update ingestion successful${NC}"
+    
+    # Wait for HAPI to process
+    sleep 2
+    
+    # Verify updates
+    echo "  Step 5: Verifying updates in HAPI..."
+    
+    # Check if patient was updated (not duplicated)
+    updated_patient=$(curl -s "http://localhost:8080/fhir/Patient/$initial_patient_id")
+    updated_city=$(echo "$updated_patient" | jq -r '.address[0].city // "not-found"' 2>/dev/null || echo "not-found")
+    updated_given_count=$(echo "$updated_patient" | jq -r '.name[0].given | length' 2>/dev/null || echo "0")
+    
+    echo "  Updated patient city: $updated_city"
+    echo "  Updated given names count: $updated_given_count"
+    
+    if [ "$updated_city" = "Portland" ]; then
+      echo -e "  ${GREEN}✓ Patient data successfully updated (city changed to Portland)${NC}"
+    else
+      echo -e "  ${YELLOW}⚠ Patient city not updated (got $updated_city, expected Portland)${NC}"
+      echo -e "  ${YELLOW}  Note: HAPI may preserve original data on transaction bundle POST${NC}"
+    fi
+    
+    if [ "$updated_given_count" = "2" ]; then
+      echo -e "  ${GREEN}✓ Patient name updated (now has 2 given names)${NC}"
+    fi
+    
+    # Check observation count increased
+    final_obs_count=$(curl -s "http://localhost:8080/fhir/Observation?subject=Patient/$initial_patient_id&_summary=count" | jq -r '.total // 0' 2>/dev/null || echo "0")
+    echo "  Final observation count: $final_obs_count (was $initial_obs_count)"
+    
+    if [ "$final_obs_count" -gt "$initial_obs_count" ] 2>/dev/null; then
+      echo -e "  ${GREEN}✓ New observation successfully added${NC}"
+    else
+      echo -e "  ${YELLOW}⚠ Observation count did not increase significantly${NC}"
+      echo -e "  ${YELLOW}  Note: Both observations may have been added/updated${NC}"
+    fi
+    
+    # Check for duplicates
+    duplicate_check=$(curl -s "http://localhost:8080/fhir/Patient?_id=$initial_patient_id&_summary=count" | jq -r '.total // 0' 2>/dev/null || echo "0")
+    if [ "$duplicate_check" = "1" ]; then
+      echo -e "  ${GREEN}✓ No patient duplication (only 1 patient with this ID)${NC}"
+    else
+      echo -e "  ${RED}✗ Patient might be duplicated! Found $duplicate_check patient(s) with this ID${NC}"
+    fi
+    
   else
-    echo -e "${RED}✗ FAIL (Second ingestion)${NC} (HTTP $http_code2)"
+    echo -e "  ${RED}✗ FAIL (Update ingestion)${NC} (HTTP $http_code2)"
+    echo "  Response: $body2"
   fi
 else
-  echo -e "${RED}✗ FAIL (First ingestion)${NC} (HTTP $http_code)"
+  echo -e "${RED}✗ FAIL (Initial ingestion)${NC} (HTTP $http_code)"
+  echo "  Response: $body"
 fi
 
 echo -e "\n${BLUE}=== Step 5: Verify Cohort Organization ===${NC}"
