@@ -1,0 +1,37 @@
+{
+  "id": "https://w3id.org/charmtwinsights/irismodel/input",
+  "name": "iris_input",
+  "description": "Input schema for Iris classification model",
+  "prefixes": {
+    "linkml": "https://w3id.org/linkml/"
+  },
+  "imports": ["linkml:types"],
+  "default_range": "string",
+  "classes": {
+    "IrisInputItem": {
+      "description": "Iris flower measurements for classification",
+      "attributes": {
+        "sepal_length_cm": {
+          "description": "Sepal length in centimeters",
+          "range": "float",
+          "required": true
+        },
+        "sepal_width_cm": {
+          "description": "Sepal width in centimeters",
+          "range": "float",
+          "required": true
+        },
+        "petal_length_cm": {
+          "description": "Petal length in centimeters",
+          "range": "float",
+          "required": true
+        },
+        "petal_width_cm": {
+          "description": "Petal width in centimeters",
+          "range": "float",
+          "required": true
+        }
+      }
+    }
+  }
+}

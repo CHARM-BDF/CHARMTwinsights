@@ -5,7 +5,7 @@ APP_PORT=${APP_PORT:-8000}
 echo -e "Iris model prediction:\n"
 curl -X POST http://localhost:$APP_PORT/modeling/predict \
   -H "Content-Type: application/json" \
-  -d '{"image": "irismodel:latest", "input": [{"sepal length (cm)": 5.1, "sepal width (cm)": 3.5, "petal length (cm)": 1.4, "petal width (cm)": 0.2}, {"sepal length (cm)": 4.9, "sepal width (cm)": 3.0, "petal length (cm)": 1.4, "petal width (cm)": 0.2}]}'
+  -d '{"image": "irismodel:latest", "input": [{"sepal_length_cm": 5.1, "sepal_width_cm": 3.5, "petal_length_cm": 1.4, "petal_width_cm": 0.2}, {"sepal_length_cm": 4.9, "sepal_width_cm": 3.0, "petal_length_cm": 1.4, "petal_width_cm": 0.2}]}'
 
 echo -e "\n\nDPCGAN model prediction:\n"
 curl -X POST http://localhost:$APP_PORT/modeling/predict \

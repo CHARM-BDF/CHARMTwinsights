@@ -1,0 +1,35 @@
+# LinkML schema for Simple Classifier output validation
+# This schema defines the structure of ONE output item.
+
+id: https://w3id.org/charmtwinsights/simple-classifier/output
+name: simple_classifier_output
+description: Output schema for simple health risk classifier
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  SimpleClassifierOutputItem:
+    description: Health risk prediction result
+    attributes:
+      risk_prediction:
+        description: Risk classification (0=low risk, 1=high risk)
+        range: integer
+        required: true
+      risk_probability:
+        description: Probability of high risk (0.0 to 1.0)
+        range: float
+        required: true
+      confidence:
+        description: Model confidence in prediction (0.0 to 1.0)
+        range: float
+        required: true
+      id:
+        description: Patient identifier (if provided in input)
+        range: string
+        required: false

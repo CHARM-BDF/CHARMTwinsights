@@ -1,0 +1,22 @@
+{
+  "id": "https://w3id.org/charmtwinsights/irismodel/output",
+  "name": "iris_output",
+  "description": "Output schema for Iris classification model",
+  "prefixes": {
+    "linkml": "https://w3id.org/linkml/"
+  },
+  "imports": ["linkml:types"],
+  "default_range": "string",
+  "classes": {
+    "IrisOutputItem": {
+      "description": "Iris species classification prediction",
+      "attributes": {
+        "prediction": {
+          "description": "Predicted species (0=setosa, 1=versicolor, 2=virginica)",
+          "range": "integer",
+          "required": true
+        }
+      }
+    }
+  }
+}

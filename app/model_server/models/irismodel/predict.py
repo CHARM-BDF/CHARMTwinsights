@@ -20,7 +20,16 @@ def main():
         # Load input features
         with open(input_file) as f:
             X = pd.read_json(f)
-        
+
+        # Rename columns from schema format to sklearn iris dataset format
+        column_mapping = {
+            'sepal_length_cm': 'sepal length (cm)',
+            'sepal_width_cm': 'sepal width (cm)',
+            'petal_length_cm': 'petal length (cm)',
+            'petal_width_cm': 'petal width (cm)'
+        }
+        X = X.rename(columns=column_mapping)
+
         print(f"Loaded {len(X)} samples for prediction", file=sys.stderr)
         
         # Load model
@@ -29,8 +38,9 @@ def main():
         
         # Make predictions
         preds = model.predict(X)
-        predictions = preds.tolist()
-        
+        # Output as list of objects with named fields for schema validation
+        predictions = [{"prediction": int(p)} for p in preds]
+
         print(f"Generated {len(predictions)} predictions", file=sys.stderr)
         
         # Output results

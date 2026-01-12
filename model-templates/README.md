@@ -23,13 +23,17 @@ This guide helps you create and deploy machine learning models for CHARMTwinsigh
 ```
 my-model/
 ├── Dockerfile          # Container definition (minimal editing needed)
-├── predict.py/.R        # Your prediction code (EDIT THIS)
-├── predict              # Execution script (don't modify)
-├── README.md            # Model documentation (EDIT THIS)
-├── examples.json        # Test examples (EDIT THIS)
-├── pyproject.toml       # Python deps (EDIT THIS)
-└── DESCRIPTION          # R deps (EDIT THIS)
+├── predict.py/.R       # Your prediction code (EDIT THIS)
+├── predict             # Execution script (don't modify)
+├── README.md           # Model documentation (EDIT THIS)
+├── examples.json       # Test examples (EDIT THIS)
+├── input_schema.yaml   # Input validation schema (EDIT THIS) - or .json
+├── output_schema.yaml  # Output validation schema (EDIT THIS) - or .json
+├── pyproject.toml      # Python deps (EDIT THIS)
+└── DESCRIPTION         # R deps (EDIT THIS)
 ```
+
+**Note:** Schema files can be YAML (`.yaml`) or JSON (`.json`) format.
 
 ### Critical Rules
 
@@ -41,6 +45,8 @@ my-model/
 - A working `/predict` script
 - `README.md` with model documentation
 - `examples.json` with valid test data
+- `input_schema.yaml` or `input_schema.json` defining input structure
+- `output_schema.yaml` or `output_schema.json` defining output structure
 
 ## Python Models
 
@@ -214,6 +220,261 @@ Your model should return JSON results:
 ]
 ```
 
+## Input/Output Validation with LinkML
+
+CHARMTwinsights uses **LinkML schemas** to validate model inputs and outputs. Schemas are **required** for all models and ensure data quality at three critical points:
+
+1. **Registration**: Examples are validated against your input schema
+2. **Pre-execution**: Inputs are validated before running your model
+3. **Post-execution**: Outputs are validated to ensure contract compliance
+
+### What is LinkML?
+
+[LinkML](https://linkml.io/) (Linked Data Modeling Language) is a schema language for describing data structures. It's similar to JSON Schema but simpler and more readable.
+
+### Schema Format Support
+
+Schemas can be provided in **YAML** or **JSON** format:
+
+| Context | Supported Formats |
+|---------|-------------------|
+| **Container files** | `.yaml` or `.json` (either works) |
+| **API registration** | JSON object in request body |
+
+YAML is often preferred for hand-written schemas (more readable), while JSON objects are standard for REST API payloads.
+
+### Required Schema Files
+
+Your model must include two schema files:
+
+```
+my-model/
+├── input_schema.yaml   # Defines expected input structure (REQUIRED)
+├── output_schema.yaml  # Defines expected output structure (REQUIRED)
+├── predict.py          # Your model code
+├── ...
+```
+
+Or use JSON format:
+
+```
+my-model/
+├── input_schema.json   # Defines expected input structure (REQUIRED)
+├── output_schema.json  # Defines expected output structure (REQUIRED)
+├── predict.py          # Your model code
+├── ...
+```
+
+### Input Schema Example
+
+Create `input_schema.yaml` to define **one input item** (not the list):
+
+```yaml
+id: https://w3id.org/charmtwinsights/my-model/input
+name: my_model_input
+description: Input schema for my model
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  InputItem:
+    description: A single input record for prediction
+    attributes:
+      age:
+        description: Patient age in years
+        range: float
+        required: true
+
+      bmi:
+        description: Body mass index
+        range: float
+        required: true
+
+      smoking_status:
+        description: Current smoking status
+        range: string
+        required: true
+
+      id:
+        description: Optional identifier for tracking
+        range: string
+        required: false
+```
+
+### Output Schema Example
+
+Create `output_schema.yaml` to define **one output item**:
+
+```yaml
+id: https://w3id.org/charmtwinsights/my-model/output
+name: my_model_output
+description: Output schema for my model
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  OutputItem:
+    description: A single prediction result
+    attributes:
+      prediction:
+        description: Primary prediction value
+        range: float
+        required: true
+
+      confidence:
+        description: Confidence score (0.0 to 1.0)
+        range: float
+        required: false
+
+      id:
+        description: Identifier from input (if provided)
+        range: string
+        required: false
+```
+
+### Common Data Types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| `string` | Text values | `"category_a"` |
+| `integer` | Whole numbers | `42` |
+| `float` | Decimal numbers | `3.14` |
+| `boolean` | True/false | `true` |
+
+### Key Attributes
+
+- **`required: true`** - Field must be present
+- **`required: false`** - Field is optional (default)
+- **`description`** - Human-readable explanation
+- **`range`** - Data type for the field
+
+### Defining Categorical/Enum Fields
+
+For categorical fields with a fixed set of valid values, use LinkML enums:
+
+#### Approach 1: Separate Enum Definitions
+
+Define enums at the schema level and reference them in attributes:
+
+```yaml
+enums:
+  SexAtBirthEnum:
+    description: Biological sex at birth
+    permissible_values:
+      MALE:
+        description: Male
+      FEMALE:
+        description: Female
+      OTHER:
+        description: Other
+      UNKNOWN:
+        description: Unknown or not disclosed
+
+classes:
+  InputItem:
+    attributes:
+      sex_at_birth:
+        description: Biological sex at birth
+        range: SexAtBirthEnum  # Reference the enum
+        required: true
+```
+
+#### Approach 2: Inline permissible_values
+
+For single-use categorical fields:
+
+```yaml
+classes:
+  InputItem:
+    attributes:
+      risk_level:
+        description: Risk assessment category
+        permissible_values:
+          LOW:
+            description: Low risk (score 0-33)
+          MODERATE:
+            description: Moderate risk (score 34-66)
+          HIGH:
+            description: High risk (score 67-100)
+        required: true
+```
+
+### Updating Your Dockerfile
+
+Add your schema files to the Dockerfile:
+
+```dockerfile
+# Copy schema files (REQUIRED) - use .yaml or .json
+COPY input_schema.yaml output_schema.yaml ./
+
+# Or if using JSON format:
+# COPY input_schema.json output_schema.json ./
+```
+
+### Providing Schemas via API
+
+Alternatively, you can provide schemas as JSON objects in the registration API request:
+
+```json
+{
+  "image": "my-model:latest",
+  "title": "My Model",
+  "short_description": "Description",
+  "authors": "Your Name",
+  "input_schema": {
+    "id": "https://w3id.org/my-model/input",
+    "name": "my_input",
+    "prefixes": {"linkml": "https://w3id.org/linkml/"},
+    "imports": ["linkml:types"],
+    "default_range": "string",
+    "classes": {
+      "InputItem": {
+        "attributes": {
+          "feature1": {"range": "float", "required": true},
+          "feature2": {"range": "string", "required": true}
+        }
+      }
+    }
+  },
+  "output_schema": {
+    "id": "https://w3id.org/my-model/output",
+    "name": "my_output",
+    "prefixes": {"linkml": "https://w3id.org/linkml/"},
+    "imports": ["linkml:types"],
+    "default_range": "string",
+    "classes": {
+      "OutputItem": {
+        "attributes": {
+          "prediction": {"range": "float", "required": true}
+        }
+      }
+    }
+  }
+}
+```
+
+API-provided schemas override container schemas if both are present.
+
+**Note:** API schemas are proper JSON objects (not escaped strings). Container schemas can be YAML or JSON files.
+
+### More Information
+
+- [LinkML Documentation](https://linkml.io/linkml/)
+- [LinkML Schema Reference](https://linkml.io/linkml/schemas/index.html)
+- See built-in models for complete examples: `app/model_server/models/`
+
 ## Troubleshooting
 
 ### Build Errors
@@ -223,13 +484,18 @@ Your model should return JSON results:
 
 ### Registration Errors
 1. **"Examples required"**: Add `examples.json` or provide via API
-2. **"README required"**: Add `README.md` or provide via API  
+2. **"README required"**: Add `README.md` or provide via API
 3. **"Image not found"**: Build your Docker image first
+4. **"Input schema is required"**: Add `input_schema.yaml` or `input_schema.json` to container, or provide JSON via API
+5. **"Output schema is required"**: Add `output_schema.yaml` or `output_schema.json` to container, or provide JSON via API
+6. **"Examples validation failed"**: Your `examples.json` doesn't match your input schema
 
 ### Runtime Errors
 1. **Permission denied**: Make sure `predict` script is executable
 2. **Module not found**: Check your dependencies are installed
 3. **File paths**: Use relative paths from `/app` directory
+4. **"Input validation failed"**: Prediction request data doesn't match your input schema
+5. **"Output validation failed"**: Your model's output doesn't match your output schema
 
 ### Common Dockerfile Mistakes
 ```dockerfile

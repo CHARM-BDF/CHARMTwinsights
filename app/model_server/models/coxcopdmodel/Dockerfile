@@ -38,6 +38,7 @@ COPY predict ./
 # Copy metadata files for container-based registration
 COPY README.md ./
 COPY examples.json ./
+COPY input_schema.yaml output_schema.yaml ./
 
 # Make the 'predict' shell script executable
 RUN chmod +x predict

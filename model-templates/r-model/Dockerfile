@@ -30,6 +30,7 @@ COPY predict.R ./
 COPY predict ./
 COPY README.md ./
 COPY examples.json ./
+COPY input_schema.yaml output_schema.yaml ./
 
 # Copy your model artifacts (adjust as needed)
 # COPY model_artifacts/ ./model_artifacts/

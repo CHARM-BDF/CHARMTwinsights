@@ -1,0 +1,40 @@
+# LinkML schema for DPCGANSModel input validation
+# This schema defines the structure of ONE input item.
+# The model_server validates each item in the input array separately.
+
+id: https://w3id.org/charmtwinsights/dpcgansmodel/input
+name: dpcgans_input
+description: Input schema for DPCGANS synthetic data generation
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  DPCGANSInputItem:
+    description: Parameters for synthetic data generation
+    attributes:
+      num_rows:
+        description: Number of synthetic rows to generate
+        range: integer
+        required: true
+      max_retries:
+        description: Maximum retry attempts for sampling
+        range: integer
+        required: true
+      max_rows_multiplier:
+        description: Multiplier for maximum rows during sampling
+        range: integer
+        required: true
+      float_rtol:
+        description: Relative tolerance for float comparisons
+        range: float
+        required: true
+      graceful_reject_sampling:
+        description: Use graceful reject sampling
+        range: boolean
+        required: true

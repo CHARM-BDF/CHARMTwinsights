@@ -1,0 +1,64 @@
+# LinkML Schema for R Model Input Validation
+# ===========================================
+#
+# This schema defines the structure of ONE input item.
+# The model_server validates each item in the input array separately.
+#
+# CUSTOMIZATION GUIDE:
+# 1. Update the id and name to match your model
+# 2. Rename the class (e.g., MyModelInputItem)
+# 3. Define your model's input attributes
+# 4. Set appropriate data types and requirements
+# 5. Add enum definitions for categorical fields with fixed values
+#
+# COMMON DATA TYPES:
+# - string: Text values
+# - integer: Whole numbers (1, 2, 3)
+# - float: Decimal numbers (1.5, 3.14)
+# - boolean: true/false values
+# - Enum: Categorical values with fixed set of options
+
+id: https://w3id.org/charmtwinsights/r-model/input
+name: r_model_input
+description: Input schema for R model - customize this description
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+# Example enumeration for categorical features
+enums:
+  CategoryEnum:
+    description: Example categorical feature values
+    permissible_values:
+      category_a:
+        description: Category A
+      category_b:
+        description: Category B
+      category_c:
+        description: Category C
+
+classes:
+  RModelInputItem:
+    description: A single input record for prediction - customize this description
+    attributes:
+      feature1:
+        description: First numeric feature (customize this)
+        range: float
+        required: true
+      feature2:
+        description: Categorical feature with enum validation
+        range: CategoryEnum
+        required: true
+      feature3:
+        description: Third numeric feature (customize this)
+        range: float
+        required: true
+      id:
+        description: Optional identifier for tracking this input through prediction
+        range: string
+        required: false
