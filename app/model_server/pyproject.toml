@@ -18,6 +18,8 @@ dependencies = [
     "python-multipart (>=0.0.20,<0.0.21)",
     "pydantic (>=2.11.7,<3.0.0)",
     "linkml (>=1.8.0,<2.0.0)",
+    "linkml-term-validator (>=0.2.0,<0.3.0)",
+    "oaklib (>=0.6.0,<0.7.0)",
     "pyyaml (>=6.0.0,<7.0.0)",
 ]
 

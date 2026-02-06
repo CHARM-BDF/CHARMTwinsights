@@ -256,6 +256,10 @@ def get_model_metadata(image_tag: str) -> Dict[str, Any]:
         - authors: Model authors
         - examples: Example input records (shows exact format expected)
         - readme: Full README documentation with feature descriptions
+        - input_schema: Original LinkML input schema (if provided)
+        - output_schema: Original LinkML output schema (if provided)
+        - input_schema_expanded: Expanded input schema with reachable_from resolved
+        - output_schema_expanded: Expanded output schema with reachable_from resolved
     """
     url = f"{MODEL_SERVER_URL}/models/{image_tag}"
     response = requests.get(url, timeout=10)
@@ -632,4 +636,3 @@ if __name__ == "__main__":
     
     # Use streamable-http transport
     mcp.run(transport="streamable-http", host=host, port=port)
-

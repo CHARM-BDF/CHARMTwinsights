@@ -11,7 +11,14 @@ from pydantic import BaseModel
 import docker
 from pymongo import MongoClient
 from typing import List, Any, Optional, Dict
-from model_server.validation import ValidationError, validate_items, extract_target_class, normalize_schema_to_string, parse_schema
+from model_server.validation import (
+    ValidationError,
+    validate_items,
+    extract_target_class,
+    normalize_schema_to_string,
+    parse_schema,
+    expand_and_normalize_schema,
+)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -97,10 +104,11 @@ def _run_model_container(image: str, input_data: any, model_metadata: dict = Non
         if model_metadata and model_metadata.get("input_schema"):
             logger.info(f"Validating input data against schema for {image}")
             try:
-                target_class = extract_target_class(model_metadata["input_schema"])
+                input_schema = model_metadata.get("input_schema_expanded") or model_metadata.get("input_schema")
+                target_class = extract_target_class(input_schema)
                 validate_items(
                     items=input_data,
-                    schema=model_metadata["input_schema"],
+                    schema=input_schema,
                     target_class_name=target_class,
                     data_type="input"
                 )
@@ -209,12 +217,13 @@ def _run_model_container(image: str, input_data: any, model_metadata: dict = Non
         if model_metadata and model_metadata.get("output_schema"):
             logger.info(f"Validating output data against schema for {image}")
             try:
-                target_class = extract_target_class(model_metadata["output_schema"])
+                output_schema = model_metadata.get("output_schema_expanded") or model_metadata.get("output_schema")
+                target_class = extract_target_class(output_schema)
                 # Handle both list and single-item outputs
                 output_list = predictions if isinstance(predictions, list) else [predictions]
                 validate_items(
                     items=output_list,
-                    schema=model_metadata["output_schema"],
+                    schema=output_schema,
                     target_class_name=target_class,
                     data_type="output"
                 )
@@ -399,14 +408,27 @@ def _register_model_internal(metadata: dict) -> dict:
         raise Exception(f"Image not found locally: {image}")
 
     try:
+        # Expand schemas if reachable_from is present (hard fail if expansion fails)
+        try:
+            original_input_schema, expanded_input_schema = expand_and_normalize_schema(metadata.get("input_schema"))
+            original_output_schema, expanded_output_schema = expand_and_normalize_schema(metadata.get("output_schema"))
+        except Exception as e:
+            raise Exception(f"Schema expansion failed: {e}")
+
+        metadata["input_schema"] = original_input_schema
+        metadata["input_schema_expanded"] = expanded_input_schema
+        metadata["output_schema"] = original_output_schema
+        metadata["output_schema_expanded"] = expanded_output_schema
+
         # Validate examples against input schema before testing
         if metadata.get("input_schema"):
             logger.info(f"Validating examples against input schema for {image}")
             try:
-                target_class = extract_target_class(metadata["input_schema"])
+                schema_for_validation = metadata.get("input_schema_expanded") or metadata.get("input_schema")
+                target_class = extract_target_class(schema_for_validation)
                 validate_items(
                     items=metadata["examples"],
-                    schema=metadata["input_schema"],
+                    schema=schema_for_validation,
                     target_class_name=target_class,
                     data_type="example input"
                 )
@@ -436,7 +458,9 @@ def _register_model_internal(metadata: dict) -> dict:
             "readme": metadata["readme"],
             "examples": metadata["examples"],
             "input_schema": metadata.get("input_schema"),
-            "output_schema": metadata.get("output_schema")
+            "input_schema_expanded": metadata.get("input_schema_expanded"),
+            "output_schema": metadata.get("output_schema"),
+            "output_schema_expanded": metadata.get("output_schema_expanded"),
         }
         # Upsert (replace if exists, insert if new)
         models_collection.replace_one({"image": image}, doc, upsert=True)
@@ -449,7 +473,11 @@ def _register_model_internal(metadata: dict) -> dict:
             "registration_logs": {
                 "stdout": result["stdout"],
                 "stderr": result["stderr"]
-            }
+            },
+            "input_schema": schema_to_response_format(metadata.get("input_schema")),
+            "output_schema": schema_to_response_format(metadata.get("output_schema")),
+            "input_schema_expanded": schema_to_response_format(metadata.get("input_schema_expanded")),
+            "output_schema_expanded": schema_to_response_format(metadata.get("output_schema_expanded")),
         }
     except Exception as e:
         logger.error(f"Registration failed for {image}: {e}")
@@ -694,6 +722,8 @@ def list_models():
             "examples": m.get("examples", []),
             "has_input_schema": m.get("input_schema") is not None,
             "has_output_schema": m.get("output_schema") is not None,
+            "has_input_schema_expanded": m.get("input_schema_expanded") is not None,
+            "has_output_schema_expanded": m.get("output_schema_expanded") is not None,
         })
     return models
 
@@ -713,4 +743,6 @@ def model_info(image_tag: str):
         "readme": m.get("readme", ""),
         "input_schema": schema_to_response_format(m.get("input_schema")),
         "output_schema": schema_to_response_format(m.get("output_schema")),
+        "input_schema_expanded": schema_to_response_format(m.get("input_schema_expanded")),
+        "output_schema_expanded": schema_to_response_format(m.get("output_schema_expanded")),
     }
