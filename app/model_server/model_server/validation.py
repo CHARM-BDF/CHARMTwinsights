@@ -15,7 +15,6 @@ from typing import List, Dict, Any, Union, Optional, Tuple
 import yaml
 import requests
 import shutil
-import time
 from linkml.validator import validate
 from oaklib import get_adapter
 from oaklib.interfaces import OboGraphInterface
@@ -24,11 +23,8 @@ logger = logging.getLogger(__name__)
 
 _OAK_ADAPTER_CACHE: Dict[str, OboGraphInterface] = {}
 _LABEL_CACHE: Dict[str, Optional[str]] = {}
-_ONTOLOGY_FILE_CACHE: Dict[str, str] = {}
-_ONTOLOGY_FILE_META: Dict[str, Dict[str, Any]] = {}
 
 _ONTOLOGY_MAX_BYTES = int(os.getenv("MODEL_SERVER_ONTOLOGY_MAX_BYTES", str(300 * 1024 * 1024)))
-_ONTOLOGY_CACHE_MAX_BYTES = int(os.getenv("MODEL_SERVER_ONTOLOGY_CACHE_MAX_BYTES", str(1024 * 1024 * 1024)))
 _ONTOLOGY_TMP_DIR = os.getenv("MODEL_SERVER_ONTOLOGY_TMP_DIR", "/tmp")
 
 
@@ -161,41 +157,47 @@ def _expand_reachable_from_expression(expr: Dict[str, Any]) -> Dict[str, Dict[st
     include_self = bool(expr.get("include_self", expr.get("reflexive", False)))
     is_direct = bool(expr.get("is_direct", False))
 
-    source_ontology = _resolve_source_ontology(source_ontology)
-    adapter = _get_adapter(source_ontology)
+    resolved_source, temp_path = _resolve_source_ontology(source_ontology)
+    adapter = _get_adapter(resolved_source)
 
     expanded: Dict[str, Dict[str, Any]] = {}
-    for node in source_nodes:
-        try:
-            if is_direct and hasattr(adapter, "children"):
-                descendants = adapter.children(node, predicates=predicates)
-            else:
-                descendants = adapter.descendants(node, predicates=predicates)
-        except Exception as e:
-            raise ValueError(f"Failed to expand reachable_from for {node}: {e}")
+    try:
+        for node in source_nodes:
+            try:
+                if is_direct and hasattr(adapter, "children"):
+                    descendants = adapter.children(node, predicates=predicates)
+                else:
+                    descendants = adapter.descendants(node, predicates=predicates)
+            except Exception as e:
+                raise ValueError(f"Failed to expand reachable_from for {node}: {e}")
 
-        term_set = set(descendants or [])
-        if include_self:
-            term_set.add(node)
+            term_set = set(descendants or [])
+            if include_self:
+                term_set.add(node)
 
-        for term in term_set:
-            term_label = _get_label(adapter, term)
-            entry = {"meaning": term, "text": term}
-            if term_label and term_label != term:
-                entry["description"] = term_label
-            expanded[term] = entry
+            for term in term_set:
+                term_label = _get_label(adapter, term)
+                entry = {"meaning": term, "text": term}
+                if term_label and term_label != term:
+                    entry["description"] = term_label
+                expanded[term] = entry
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except Exception:
+                pass
 
     return expanded
 
 
-def _resolve_source_ontology(source_ontology: str) -> str:
+def _resolve_source_ontology(source_ontology: str) -> Tuple[str, Optional[str]]:
     if source_ontology.startswith("http://") or source_ontology.startswith("https://"):
-        cached_path = _ONTOLOGY_FILE_CACHE.get(source_ontology)
-        if cached_path and os.path.exists(cached_path):
-            _touch_ontology_cache(source_ontology)
-            return f"simpleobo:{cached_path}"
-
-        _ensure_ontology_cache_budget(0)
+        if not source_ontology.lower().endswith(".obo"):
+            logger.warning(
+                "Non-OBO ontology URL provided (%s). Prefer .obo for smaller downloads.",
+                source_ontology,
+            )
 
         try:
             response = requests.get(source_ontology, timeout=60, stream=True)
@@ -244,62 +246,13 @@ def _resolve_source_ontology(source_ontology: str) -> str:
                 f.write(chunk)
             temp_path = f.name
 
-        _ensure_ontology_cache_budget(total_bytes)
-
-        _ONTOLOGY_FILE_CACHE[source_ontology] = temp_path
-        _ONTOLOGY_FILE_META[source_ontology] = {
-            "path": temp_path,
-            "size": total_bytes,
-            "last_access": time.time(),
-        }
-        return f"simpleobo:{temp_path}"
+        return f"simpleobo:{temp_path}", temp_path
 
     if source_ontology.startswith("file:"):
         local_path = source_ontology[len("file:"):]
-        return f"simpleobo:{local_path}"
+        return f"simpleobo:{local_path}", None
 
-    return source_ontology
-
-
-def _touch_ontology_cache(source_ontology: str) -> None:
-    meta = _ONTOLOGY_FILE_META.get(source_ontology)
-    if meta:
-        meta["last_access"] = time.time()
-
-
-def _ensure_ontology_cache_budget(incoming_size: int) -> None:
-    if _ONTOLOGY_CACHE_MAX_BYTES <= 0:
-        return
-
-    total_size = sum(meta.get("size", 0) for meta in _ONTOLOGY_FILE_META.values())
-    if total_size + incoming_size <= _ONTOLOGY_CACHE_MAX_BYTES:
-        return
-
-    # Evict least recently used files until within budget
-    candidates = sorted(
-        _ONTOLOGY_FILE_META.items(),
-        key=lambda item: item[1].get("last_access", 0),
-    )
-    for url, meta in candidates:
-        path = meta.get("path")
-        size = meta.get("size", 0)
-        if path and os.path.exists(path):
-            try:
-                os.unlink(path)
-            except Exception:
-                pass
-        _ONTOLOGY_FILE_META.pop(url, None)
-        _ONTOLOGY_FILE_CACHE.pop(url, None)
-        total_size -= size
-        if total_size + incoming_size <= _ONTOLOGY_CACHE_MAX_BYTES:
-            break
-
-    if total_size + incoming_size > _ONTOLOGY_CACHE_MAX_BYTES:
-        raise ValueError(
-            f"Ontology cache budget exceeded. "
-            f"Current cache size {total_size} bytes, incoming {incoming_size} bytes, "
-            f"max {_ONTOLOGY_CACHE_MAX_BYTES} bytes."
-        )
+    return source_ontology, None
 
 
 def _collect_reachable_from(enum_def: Dict[str, Any]) -> List[Dict[str, Any]]:

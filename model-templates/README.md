@@ -552,6 +552,16 @@ There is a minimal example that demonstrates `reachable_from` enum expansion usi
 
 - `model-templates/examples/reachable-from-demo/`
 
+**What this enables**
+- Schema authors can restrict enum values to terms reachable from a root ontology term.
+- The model server expands `reachable_from` at **registration time** and stores the expanded schema.
+- Predictions validate against the expanded schema, so runtime calls are fast and deterministic.
+
+**Important behavior**
+- Expansion happens when a model is registered. If the ontology changes later, you must re-register the model to pick up changes.
+- Ontologies are downloaded on demand at registration time (not during prediction) and are not retained after expansion.
+- Prefer `.obo` URLs for smaller downloads; other formats may be significantly larger.
+
 This model uses a LinkML schema with:
 
 ```
@@ -563,3 +573,25 @@ reachable_from:
 ```
 
 It is intended as a reference for how to structure schemas that need to enforce ontology-backed enums.
+
+**Allowing values outside the ontology**
+If you need to allow values not in the ontology (e.g., missing/unknown), add explicit `permissible_values` entries.
+In order to be LinkML conformant, the keys for permissible values must match the `text:` entries exactly:
+
+```
+prefixes:
+  CHARM: https://example.org/charm/
+
+permissible_values:
+  Unknown:
+    text: Unknown
+    meaning: CHARM:Unknown
+    description: Unknown/missing value
+```
+
+**Supported enum features (current model server behavior)**
+- `reachable_from` on an enum
+- `include` / `minus` entries that contain `reachable_from`
+- `include` / `minus` entries that contain `permissible_values`
+
+Other advanced enum features in LinkML may parse, but only the above are actively expanded by the model server.
