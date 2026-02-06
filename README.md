@@ -10,15 +10,17 @@
     - [0. Prerequisites](#0-prerequisites)
     - [1. Build and Start Application](#1-build-and-start-application)
     - [2. Generate Synthetic Data](#2-generate-synthetic-data)
-    - [3. Test Models](#3-test-models)
-    - [4. Test Analytics](#4-test-analytics)
-    - [5. Stopping and Cleaning Up](#5-stopping-and-cleaning-up)
+    - [3. Test External FHIR Ingestion](#3-test-external-fhir-ingestion)
+    - [4. Test Models](#4-test-models)
+    - [5. Test Analytics](#5-test-analytics)
+    - [6. Stopping and Cleaning Up](#6-stopping-and-cleaning-up)
 4. [Troubleshooting](#troubleshooting)
 5. [Model Development](#model-development)
-6. [Development](#development)
+6. [MCP Server](#mcp-server)
+7. [Development](#development)
     - [Recommendations](#recommendations)
     - [Iterating](#iterating)
-7. [Miscellaneous](#miscellaneous)
+8. [Miscellaneous](#miscellaneous)
 
 ## Overview
 
@@ -30,6 +32,7 @@ It is under active development, and currently supports the following features vi
 - Internal FHIR data storage and cohort management with [HAPI FHIR](https://hapifhir.io/).
 - Data summary statistics and querying.
 - Predictive analytics, supporting health risk models and synthetic data generation with GAN and similar models.
+- Ingestion of FHIR data from external sources such as FHIR-HOSE.
 
 ## Architecture
 
@@ -55,6 +58,9 @@ CHARMTwinsight is designed as a microservices architecture managed with `docker 
 
 **`model_server_db`**: MongoDB database for storing metadata on hosted models.
 
+**`mcp_server`**: Model Context Protocol (MCP) server for cohort generation, patient querying, and model access
+
+All services are containerized, most developed with python>=3.13.
 
 ## Installation and Usage
 
@@ -77,11 +83,9 @@ docker compose up --detach
 
 The `build_all.sh` script builds both the application images and the built-in ML models. All `docker compose` commands need to be run in the same directory as the `docker-compose.yml` file.
 
-**Access Points:**
-- API Documentation: http://localhost:8000/docs
+#### REST-API
 
-All built-in models (IrisModel, CoxCOPDModel, DPCGANSModel) will be automatically available.
-
+When running, public-facing REST endpoints are found at [http://localhost:8000/](http://localhost:8000/), with documentation at [http://localhost:8000/docs](http://localhost:8000/docs) ([documentation link, for the bots reading this](http://localhost:8000/docs)).
 
 ### 2. Generate Synthetic Data
 
@@ -99,7 +103,25 @@ synthea_server/gen_patients.sh
 
 These data are pushed to the FHIR server accessible at `http://localhost:8080` for development purposes.
 
-### 3. Test Models
+### 3. Test External FHIR Ingestion
+
+External FHIR data from sources like mobile apps, wearables, or EHRs can be ingested via POST request to `http://localhost:8000/ingest/fhir`. The endpoint accepts a FHIR Bundle and automatically:
+
+- Prefixes patient IDs with `ext-` to prevent conflicts with synthetic data
+- Updates all references throughout the bundle
+- Applies CHARM tags for cohort organization
+- Supports updates to existing patient data (re-ingesting updates rather than duplicates)
+
+A comprehensive test script demonstrates ingestion, validation, and update capabilities:
+
+```bash
+# working dir: app
+synthea_server/test_external_ingest.sh
+```
+
+This script tests basic ingestion, custom parameters, validation, and verifies that patient data is properly updated rather than duplicated. See the [API documentation](http://localhost:8000/docs) for example FHIR bundles and detailed usage.
+
+### 4. Test Models
 
 Predictive model capabilities are accessed under endpoints at `http://localhost:8000/modeling`. Example CURLs are available via script:
 
@@ -110,7 +132,7 @@ model_server/models/test_predict_models.sh
 
 As above, skip if you are not developing or using models.
 
-### 4. Test Analytics
+### 5. Test Analytics
 
 Summary statistics about generated patient data are available under endpoints at `http://localhost:8000/stats`. Examples CURLs are available via script:
 
@@ -119,7 +141,7 @@ Summary statistics about generated patient data are available under endpoints at
 stat_server_py/test_stats.sh
 ```
 
-### 5. Stopping and Cleaning Up
+### 6. Stopping and Cleaning Up
 
 #### Basic Stop
 To stop the application but keep generated/imported FHIR data:
@@ -222,6 +244,31 @@ CHARMTwinsights provides templates and tools to help developers create new machi
 - **Working example:** [`model-templates/examples/simple-classifier/`](model-templates/examples/simple-classifier/)
 - **Dockerfile validator:** [`model-templates/validate-dockerfile.py`](model-templates/validate-dockerfile.py)
 
+## MCP Server
+
+CHARMTwinsights includes a Model Context Protocol (MCP) server that allows AI assistants to interact with the platform programmatically.
+
+The MCP server is automatically started with `docker compose up` and runs on port 8006.
+
+**Available capabilities:**
+- **Patient Data Access**: Search patients, retrieve demographics, get structured clinical data (Observations, Conditions, Procedures, Medications), access narrative reports
+- **Predictive Models**: List available models, view model documentation and requirements, execute predictions
+
+**Example configuration** for Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "charmtwinsight": {
+      "command": "npx",
+      "args": ["mcp-remote", "http://localhost:8006/mcp"]
+    }
+  }
+}
+```
+
+For more information see [`app/mcp_server/README.md`](app/mcp_server/README.md).
+
 ## Development
 
 ### Recommendations
@@ -242,6 +289,7 @@ For development purposes, each service is exposed to the localhost on independen
 - stat_server_r: localhost:8002
 - synthea_server: localhost:8003
 - model_server: localhost:8004
+- mcp_server: localhost:8006
 
 ### Accessing HAPI FHIR Server
 
