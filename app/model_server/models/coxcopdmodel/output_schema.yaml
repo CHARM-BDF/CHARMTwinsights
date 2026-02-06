@@ -1,0 +1,28 @@
+# LinkML schema for CoxCOPDModel output validation
+# This schema defines the structure of ONE output item.
+# The model_server validates each item in the output array separately.
+
+id: https://w3id.org/charmtwinsights/coxcopdmodel/output
+name: coxcopd_output
+description: Output schema for Cox COPD survival model
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  CoxCOPDOutputItem:
+    description: COPD risk and survival predictions
+    attributes:
+      partial_hazard:
+        description: Partial hazard ratio for COPD risk (can be null for edge cases)
+        range: float
+        required: false
+      survival_probability_5_years:
+        description: Probability of survival at 5 years
+        range: float
+        required: false

@@ -1,0 +1,36 @@
+# LinkML Schema for R Model Output Validation
+# ============================================
+#
+# This schema defines the structure of ONE output item.
+# The model_server validates each item in the output array separately.
+#
+# CUSTOMIZATION GUIDE:
+# 1. Update the id and name to match your model
+# 2. Rename the class (e.g., MyModelOutputItem)
+# 3. Define your model's output attributes
+# 4. Set appropriate data types and requirements
+
+id: https://w3id.org/charmtwinsights/r-model/output
+name: r_model_output
+description: Output schema for R model - customize this description
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  RModelOutputItem:
+    description: A single prediction result - customize this description
+    attributes:
+      prediction:
+        description: Model prediction value
+        range: float
+        required: true
+      id:
+        description: Input identifier (if provided)
+        range: string
+        required: false

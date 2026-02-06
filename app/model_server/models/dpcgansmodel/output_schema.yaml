@@ -1,0 +1,39 @@
+# LinkML schema for DPCGANSModel output validation
+#
+# This model generates synthetic tabular data with a DYNAMIC structure
+# that depends on the model's training data. The columns and types of
+# generated records cannot be known at schema definition time.
+#
+# OUTPUT VALIDATION IS SKIPPED for this model because:
+# - Generated data structure depends on training data
+# - Each output item contains a variable number of records
+# - Record fields vary based on the original dataset
+#
+# This schema exists to:
+# 1. Satisfy the schema requirement for model registration
+# 2. Document the expected output format
+# 3. Signal to the validator that output validation should be skipped
+#    (by having no attributes defined)
+
+id: https://w3id.org/charmtwinsights/dpcgansmodel/output
+name: dpcgans_output
+description: |
+  Output schema for DPCGANS synthetic data generation.
+  Output validation is skipped due to dynamic structure.
+  Each output item contains a 'synthetic_data' array with generated records.
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  DPCGANSOutputItem:
+    description: |
+      A synthetic dataset generation result. The structure is dynamic
+      and depends on the model's training data. Output validation is
+      skipped for this schema (no attributes defined).
+    # No attributes - validation will be skipped

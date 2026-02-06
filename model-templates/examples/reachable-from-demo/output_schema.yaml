@@ -1,0 +1,18 @@
+id: https://example.org/reachable-from-demo/output
+name: ReachableFromDemoOutput
+description: Output schema for reachable_from demo
+prefixes:
+  linkml: https://w3id.org/linkml/
+imports:
+  - linkml:types
+default_range: string
+
+classes:
+  OutputRecord:
+    attributes:
+      normalized_sex:
+        required: true
+        range: string
+      is_adult:
+        required: true
+        range: boolean

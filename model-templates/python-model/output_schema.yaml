@@ -1,0 +1,50 @@
+# LinkML Schema for Model Output Validation
+# ==========================================
+#
+# This schema defines the structure of ONE output item.
+# The model_server validates each item in the output array separately.
+#
+# CUSTOMIZATION GUIDE:
+# 1. Update the id and name to match your model
+# 2. Rename the class (e.g., MyModelOutputItem)
+# 3. Define your model's output attributes
+# 4. Ensure your predict.py outputs objects matching this schema
+#
+# IMPORTANT: Your model's output should be a list of objects like:
+# [{"prediction": 0.85, "confidence": 0.92}, {"prediction": 0.23, "confidence": 0.88}]
+#
+# NOT raw values like: [0.85, 0.23]
+
+id: https://w3id.org/charmtwinsights/my-model/output
+name: my_model_output
+description: Output schema for my model - customize this description
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  OutputItem:
+    description: A single prediction result - customize this description
+    attributes:
+      # Primary prediction value
+      prediction:
+        description: Primary prediction output (customize this)
+        range: float
+        required: true
+
+      # Optional confidence score
+      confidence:
+        description: Confidence score for the prediction (0.0 to 1.0)
+        range: float
+        required: false
+
+      # Optional ID passthrough
+      id:
+        description: Input identifier (if provided in input)
+        range: string
+        required: false
