@@ -417,3 +417,33 @@ else
     echo -e "${RED}✗ Some tests failed${NC}"
     exit 1
 fi
+
+# ====================
+# ReachableFromModel Tests (reachable_from enum expansion)
+# ====================
+echo -e "${YELLOW}--- ReachableFromModel Tests (reachable_from) ---${NC}"
+echo ""
+
+run_test "ReachableFromModel: Valid ontology term" 200 '{
+    "image": "reachablefrommodel:latest",
+    "input": [{
+        "biological_sex": "PATO:0000383",
+        "age_years": 34
+    }]
+}'
+
+run_test "ReachableFromModel: Unknown custom value" 200 '{
+    "image": "reachablefrommodel:latest",
+    "input": [{
+        "biological_sex": "Unknown",
+        "age_years": 34
+    }]
+}'
+
+run_test "ReachableFromModel: Invalid ontology term" 400 '{
+    "image": "reachablefrommodel:latest",
+    "input": [{
+        "biological_sex": "PATO:9999998",
+        "age_years": 34
+    }]
+}'

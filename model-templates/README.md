@@ -545,3 +545,21 @@ See the `examples/` directory for complete working examples:
 - `examples/simple-classifier/` - Basic scikit-learn model
 - `examples/deep-learning/` - PyTorch model example
 - `examples/r-regression/` - R linear model example
+
+## Reachable-From (Ontology-backed enums)
+
+There is a minimal example that demonstrates `reachable_from` enum expansion using the public PATO ontology:
+
+- `model-templates/examples/reachable-from-demo/`
+
+This model uses a LinkML schema with:
+
+```
+reachable_from:
+  source_ontology: "http://purl.obolibrary.org/obo/pato.obo"
+  source_nodes:
+    - "PATO:0000047"
+  include_self: true
+```
+
+It is intended as a reference for how to structure schemas that need to enforce ontology-backed enums.

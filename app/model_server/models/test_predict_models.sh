@@ -56,3 +56,11 @@ curl -X POST http://localhost:$APP_PORT/modeling/predict \
 
 echo -e "\n\nPrediction test for coxcopdmodel sent."
 echo -e "\n"
+
+echo -e "\n\nReachableFromModel prediction:\n"
+curl -X POST http://localhost:$APP_PORT/modeling/predict \
+  -H "Content-Type: application/json" \
+  -d '{"image": "reachablefrommodel:latest", "input": [{"biological_sex": "PATO:0000383", "age_years": 34}]}'
+
+echo -e "\n\nPrediction test for reachablefrommodel sent."
+echo -e "\n"

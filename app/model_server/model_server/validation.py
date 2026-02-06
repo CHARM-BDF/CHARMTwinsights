@@ -13,6 +13,9 @@ import os
 import json
 from typing import List, Dict, Any, Union, Optional, Tuple
 import yaml
+import requests
+import shutil
+import time
 from linkml.validator import validate
 from oaklib import get_adapter
 from oaklib.interfaces import OboGraphInterface
@@ -21,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 _OAK_ADAPTER_CACHE: Dict[str, OboGraphInterface] = {}
 _LABEL_CACHE: Dict[str, Optional[str]] = {}
+_ONTOLOGY_FILE_CACHE: Dict[str, str] = {}
+_ONTOLOGY_FILE_META: Dict[str, Dict[str, Any]] = {}
+
+_ONTOLOGY_MAX_BYTES = int(os.getenv("MODEL_SERVER_ONTOLOGY_MAX_BYTES", str(300 * 1024 * 1024)))
+_ONTOLOGY_CACHE_MAX_BYTES = int(os.getenv("MODEL_SERVER_ONTOLOGY_CACHE_MAX_BYTES", str(1024 * 1024 * 1024)))
+_ONTOLOGY_TMP_DIR = os.getenv("MODEL_SERVER_ONTOLOGY_TMP_DIR", "/tmp")
 
 
 def normalize_schema_to_string(schema: Union[str, Dict[str, Any], None]) -> Optional[str]:
@@ -96,9 +105,26 @@ def _as_list(value: Any) -> List[Any]:
 def _normalize_permissible_values(pv: Any) -> Dict[str, Dict[str, Any]]:
     if pv is None:
         return {}
-    if isinstance(pv, dict):
-        return pv
-    raise ValueError("permissible_values must be a dict if provided")
+    if not isinstance(pv, dict):
+        raise ValueError("permissible_values must be a dict if provided")
+
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for key, value in pv.items():
+        if value is None:
+            normalized[key] = {"text": key, "meaning": key}
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("permissible_values entries must be objects when provided")
+
+        entry = dict(value)
+        entry.setdefault("meaning", key)
+        if entry.get("text") != key:
+            if entry.get("description") is None and entry.get("text") not in (None, key):
+                entry["description"] = entry.get("text")
+            entry["text"] = key
+        normalized[key] = entry
+
+    return normalized
 
 
 def _get_adapter(source_ontology: str) -> OboGraphInterface:
@@ -135,6 +161,7 @@ def _expand_reachable_from_expression(expr: Dict[str, Any]) -> Dict[str, Dict[st
     include_self = bool(expr.get("include_self", expr.get("reflexive", False)))
     is_direct = bool(expr.get("is_direct", False))
 
+    source_ontology = _resolve_source_ontology(source_ontology)
     adapter = _get_adapter(source_ontology)
 
     expanded: Dict[str, Dict[str, Any]] = {}
@@ -153,12 +180,126 @@ def _expand_reachable_from_expression(expr: Dict[str, Any]) -> Dict[str, Dict[st
 
         for term in term_set:
             term_label = _get_label(adapter, term)
-            entry = {"meaning": term}
-            if term_label:
-                entry["text"] = term_label
+            entry = {"meaning": term, "text": term}
+            if term_label and term_label != term:
+                entry["description"] = term_label
             expanded[term] = entry
 
     return expanded
+
+
+def _resolve_source_ontology(source_ontology: str) -> str:
+    if source_ontology.startswith("http://") or source_ontology.startswith("https://"):
+        cached_path = _ONTOLOGY_FILE_CACHE.get(source_ontology)
+        if cached_path and os.path.exists(cached_path):
+            _touch_ontology_cache(source_ontology)
+            return f"simpleobo:{cached_path}"
+
+        _ensure_ontology_cache_budget(0)
+
+        try:
+            response = requests.get(source_ontology, timeout=60, stream=True)
+            response.raise_for_status()
+        except Exception as e:
+            raise ValueError(f"Failed to download ontology from {source_ontology}: {e}")
+
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                content_length_int = int(content_length)
+            except ValueError:
+                content_length_int = None
+            if content_length_int and content_length_int > _ONTOLOGY_MAX_BYTES:
+                raise ValueError(
+                    f"Ontology file is too large ({content_length_int} bytes). "
+                    f"Max allowed is {_ONTOLOGY_MAX_BYTES} bytes."
+                )
+
+        expected_size = None
+        if content_length:
+            try:
+                expected_size = int(content_length)
+            except ValueError:
+                expected_size = None
+        size_check = expected_size or _ONTOLOGY_MAX_BYTES
+        free_space = shutil.disk_usage(_ONTOLOGY_TMP_DIR).free
+        if free_space < size_check:
+            raise ValueError(
+                f"Not enough free space in {_ONTOLOGY_TMP_DIR} for ontology download. "
+                f"Free {free_space} bytes, need at least {size_check} bytes."
+            )
+
+        total_bytes = 0
+        with tempfile.NamedTemporaryFile(mode="wb", suffix=".obo", delete=False, dir=_ONTOLOGY_TMP_DIR) as f:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+                total_bytes += len(chunk)
+                if total_bytes > _ONTOLOGY_MAX_BYTES:
+                    f.close()
+                    os.unlink(f.name)
+                    raise ValueError(
+                        f"Ontology file exceeded max size {_ONTOLOGY_MAX_BYTES} bytes while downloading."
+                    )
+                f.write(chunk)
+            temp_path = f.name
+
+        _ensure_ontology_cache_budget(total_bytes)
+
+        _ONTOLOGY_FILE_CACHE[source_ontology] = temp_path
+        _ONTOLOGY_FILE_META[source_ontology] = {
+            "path": temp_path,
+            "size": total_bytes,
+            "last_access": time.time(),
+        }
+        return f"simpleobo:{temp_path}"
+
+    if source_ontology.startswith("file:"):
+        local_path = source_ontology[len("file:"):]
+        return f"simpleobo:{local_path}"
+
+    return source_ontology
+
+
+def _touch_ontology_cache(source_ontology: str) -> None:
+    meta = _ONTOLOGY_FILE_META.get(source_ontology)
+    if meta:
+        meta["last_access"] = time.time()
+
+
+def _ensure_ontology_cache_budget(incoming_size: int) -> None:
+    if _ONTOLOGY_CACHE_MAX_BYTES <= 0:
+        return
+
+    total_size = sum(meta.get("size", 0) for meta in _ONTOLOGY_FILE_META.values())
+    if total_size + incoming_size <= _ONTOLOGY_CACHE_MAX_BYTES:
+        return
+
+    # Evict least recently used files until within budget
+    candidates = sorted(
+        _ONTOLOGY_FILE_META.items(),
+        key=lambda item: item[1].get("last_access", 0),
+    )
+    for url, meta in candidates:
+        path = meta.get("path")
+        size = meta.get("size", 0)
+        if path and os.path.exists(path):
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+        _ONTOLOGY_FILE_META.pop(url, None)
+        _ONTOLOGY_FILE_CACHE.pop(url, None)
+        total_size -= size
+        if total_size + incoming_size <= _ONTOLOGY_CACHE_MAX_BYTES:
+            break
+
+    if total_size + incoming_size > _ONTOLOGY_CACHE_MAX_BYTES:
+        raise ValueError(
+            f"Ontology cache budget exceeded. "
+            f"Current cache size {total_size} bytes, incoming {incoming_size} bytes, "
+            f"max {_ONTOLOGY_CACHE_MAX_BYTES} bytes."
+        )
 
 
 def _collect_reachable_from(enum_def: Dict[str, Any]) -> List[Dict[str, Any]]:
