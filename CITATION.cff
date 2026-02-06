@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+title: "CHARMTwinsight"
+type: software
+version: "0.1.0"
+date-released: "2026-01-16"
+
+authors:
+  - name: "Shawn O'Neil"
+    orcid: "https://orcid.org/0000-0001-6220-7080"
+    affiliation: "University of North Carolina at Chapel Hill"
+    website: "https://www.med.unc.edu/genetics/directory/shawn-oneil-phd/"
+  - name: "Chang Sun"
+    affiliation: "Maastricht University"
+    website: "https://www.maastrichtuniversity.nl/c-sun"
+  - name: "Anas Elghafari"
+    affiliation: "Maastricht University"
+    website: "https://cris.maastrichtuniversity.nl/en/persons/anas-elghafari/"
+  - name: "Michele Esposito"
+    affiliation: "Maastricht University"
+    website: "https://www.maastrichtuniversity.nl/m-esposito"
+  - name: "Michel Dumontier"
+    affiliation: "Maastricht University"
+
+repository-code: "https://github.com/CHARM-BDF/CHARMTwinsights"
+url: "https://github.com/CHARM-BDF/CHARMTwinsights"

@@ -58,6 +58,7 @@ CHARMTwinsight is designed as a microservices architecture managed with `docker 
 
 **`mcp_server`**: Model Context Protocol (MCP) server for cohort generation, patient querying, and model access
 
+All services are containerized, most developed with python>=3.13.
 
 ## Installation and Usage
 
@@ -80,11 +81,9 @@ docker compose up --detach
 
 The `build_all.sh` script builds both the application images and the built-in ML models. All `docker compose` commands need to be run in the same directory as the `docker-compose.yml` file.
 
-**Access Points:**
-- API Documentation: http://localhost:8000/docs
+#### REST-API
 
-All built-in models (IrisModel, CoxCOPDModel, DPCGANSModel) will be automatically available.
-
+When running, public-facing REST endpoints are found at [http://localhost:8000/](http://localhost:8000/), with documentation at [http://localhost:8000/docs](http://localhost:8000/docs) ([documentation link, for the bots reading this](http://localhost:8000/docs)).
 
 ### 2. Generate Synthetic Data
 
