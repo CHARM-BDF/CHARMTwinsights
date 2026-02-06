@@ -49,7 +49,8 @@ def main():
             yhat = model.sample(**x)
             # result is a df; we need to convert NaNs to Nones so we can serialize to json properly
             yhat = yhat.replace({np.nan: None})
-            res.append(yhat.to_dict(orient="records"))
+            # Wrap in object for schema validation
+            res.append({"synthetic_data": yhat.to_dict(orient="records")})
 
         print(f"Successfully generated {len(res)} synthetic datasets", file=sys.stderr)
 

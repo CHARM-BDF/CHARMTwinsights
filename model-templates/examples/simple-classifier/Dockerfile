@@ -19,5 +19,6 @@ COPY README.md ./
 COPY examples.json ./
 COPY train_model.py ./
 COPY simple_model.pkl ./
+COPY input_schema.yaml output_schema.yaml ./
 
 RUN chmod +x predict

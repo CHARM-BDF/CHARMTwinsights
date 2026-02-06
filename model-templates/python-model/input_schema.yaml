@@ -1,0 +1,96 @@
+# LinkML Schema for Model Input Validation
+# ===========================================
+#
+# This schema defines the structure of ONE input item.
+# The model_server validates each item in the input array separately.
+#
+# CUSTOMIZATION GUIDE:
+# 1. Update the id and name to match your model
+# 2. Rename the class (e.g., MyModelInputItem)
+# 3. Define your model's input attributes
+# 4. Set appropriate data types and requirements
+# 5. Add enum definitions for categorical fields with fixed values
+#
+# COMMON DATA TYPES:
+# - string: Text values
+# - integer: Whole numbers (1, 2, 3)
+# - float: Decimal numbers (1.5, 3.14)
+# - boolean: true/false values
+# - Enum: Categorical values with fixed set of options
+#
+# ATTRIBUTE OPTIONS:
+# - required: true/false - whether the field must be present
+# - description: Human-readable explanation of the field
+# - range: Data type (float, string, EnumName, etc.)
+# - minimum_value/maximum_value: Numeric constraints (optional)
+
+id: https://w3id.org/charmtwinsights/my-model/input
+name: my_model_input
+description: Input schema for my model - customize this description
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+# Example enumeration definitions for categorical features
+# Define these at the schema level and reference them in attributes
+enums:
+  RiskLevelEnum:
+    description: Clinical risk assessment categories
+    permissible_values:
+      LOW:
+        description: Low risk patient
+      MODERATE:
+        description: Moderate risk patient
+      HIGH:
+        description: High risk patient
+
+  TreatmentTypeEnum:
+    description: Type of treatment received
+    permissible_values:
+      NONE:
+        description: No treatment
+      MEDICATION:
+        description: Medication only
+      THERAPY:
+        description: Therapy only
+      COMBINED:
+        description: Combined medication and therapy
+
+classes:
+  InputItem:
+    description: A single input record for prediction - customize this description
+    attributes:
+      # Example numeric feature
+      age:
+        description: Patient age in years
+        range: float
+        required: true
+
+      # Example categorical feature with enum validation
+      risk_level:
+        description: Pre-assessment risk level
+        range: RiskLevelEnum
+        required: true
+
+      # Example optional categorical feature
+      treatment_type:
+        description: Type of treatment received (if any)
+        range: TreatmentTypeEnum
+        required: false
+
+      # Example numeric feature
+      biomarker_value:
+        description: Numeric biomarker measurement
+        range: float
+        required: true
+
+      # Optional ID field for tracking predictions
+      id:
+        description: Optional identifier for tracking this input through prediction
+        range: string
+        required: false

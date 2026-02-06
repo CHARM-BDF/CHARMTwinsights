@@ -117,6 +117,8 @@ services:
       model_server_db:
         condition: service_started
     build: ./model_server
+    environment:
+      - MODEL_SERVER_ONTOLOGY_MAX_BYTES=314572800  # 300MB - max size for a downloaded ontology used in reachable_from expansion
     volumes:
       - shared_tmp:/shared-tmp
       - /var/run/docker.sock:/var/run/docker.sock

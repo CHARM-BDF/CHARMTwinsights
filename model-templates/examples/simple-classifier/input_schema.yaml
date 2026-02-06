@@ -1,0 +1,35 @@
+# LinkML schema for Simple Classifier input validation
+# This schema defines the structure of ONE input item.
+
+id: https://w3id.org/charmtwinsights/simple-classifier/input
+name: simple_classifier_input
+description: Input schema for simple health risk classifier
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+classes:
+  SimpleClassifierInputItem:
+    description: Patient data for health risk prediction
+    attributes:
+      age:
+        description: Patient age in years
+        range: integer
+        required: true
+      bmi:
+        description: Body Mass Index
+        range: float
+        required: true
+      smoking:
+        description: Smoking status (0=non-smoker, 1=smoker)
+        range: integer
+        required: true
+      id:
+        description: Optional patient identifier for tracking
+        range: string
+        required: false

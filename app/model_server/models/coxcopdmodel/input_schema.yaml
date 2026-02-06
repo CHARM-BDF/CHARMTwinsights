@@ -1,0 +1,74 @@
+# LinkML schema for CoxCOPDModel input validation
+# This schema defines the structure of ONE input item.
+# The model_server validates each item in the input array separately.
+
+id: https://w3id.org/charmtwinsights/coxcopdmodel/input
+name: coxcopd_input
+description: Input schema for Cox COPD survival model
+
+prefixes:
+  linkml: https://w3id.org/linkml/
+
+imports:
+  - linkml:types
+
+default_range: string
+
+# Enumerations for categorical fields
+enums:
+  EthnicityEnum:
+    description: Patient ethnicity categories
+    permissible_values:
+      Not Hispanic or Latino:
+        description: Not Hispanic or Latino
+      Hispanic or Latino:
+        description: Hispanic or Latino
+
+  SexAtBirthEnum:
+    description: Biological sex at birth
+    permissible_values:
+      Female:
+        description: Female
+      Male:
+        description: Male
+
+classes:
+  CoxCOPDInputItem:
+    description: Patient data for COPD risk prediction
+    attributes:
+      ethnicity:
+        description: Patient ethnicity
+        range: EthnicityEnum
+        required: true
+      sex_at_birth:
+        description: Biological sex at birth
+        range: SexAtBirthEnum
+        required: true
+      obesity:
+        description: Obesity status (0.0=no, 1.0=yes)
+        range: float
+        required: true
+      diabetes:
+        description: Diabetes status (0.0=no, 1.0=yes)
+        range: float
+        required: true
+      cardiovascular_disease:
+        description: Cardiovascular disease status (0.0=no, 1.0=yes)
+        range: float
+        required: true
+      smoking_status:
+        description: Smoking status (0.0=no, 1.0=yes)
+        range: float
+        required: true
+      alcohol_use:
+        description: Alcohol use (0.0=no, 1.0=yes)
+        range: float
+        required: true
+      bmi:
+        description: Body Mass Index
+        range: float
+        required: true
+      age_at_time_0:
+        description: Patient age at baseline
+        range: float
+        required: true
