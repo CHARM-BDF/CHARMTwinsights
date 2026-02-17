@@ -6,7 +6,7 @@
 
 - Provide a production-grade shell for cohort workflows and predictive analytics
 - Keep UI contracts decoupled from backend response shape via typed adapters
-- Support endpoint mode switching (`mock`, `router`, `direct`, `hybrid`)
+- Support endpoint mode switching (`mock`, `direct`)
 - Establish accessibility and testing baseline (unit, integration, Playwright smoke)
 
 ## Tech Stack
@@ -54,7 +54,6 @@ Environment variables:
 
 - `VITE_SERVICE_MODE` (`mock` by default)
 - `VITE_UI_PRIMARY` (`false` by default)
-- `VITE_ROUTER_BASE` (default `http://localhost:8000`)
 - `VITE_SYNTHEA_BASE` (default `http://localhost:8003`)
 - `VITE_STAT_BASE` (default `http://localhost:8001`)
 - `VITE_MODEL_BASE` (default `http://localhost:8004`)
@@ -74,3 +73,9 @@ npm run test:e2e
 ## Current Scope
 
 This version intentionally does not execute live write flows against backend services. It is designed for workflow validation and future live integration.
+
+`direct` mode is currently a read-first integration surface:
+
+- Live reads are wired for cohorts and models
+- Write intents (generation and run creation) are disabled
+- Dashboard includes a connection-health panel for endpoint readiness checks

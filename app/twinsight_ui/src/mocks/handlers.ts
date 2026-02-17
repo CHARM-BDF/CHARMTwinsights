@@ -16,13 +16,12 @@ function matchPath(path: string) {
   return new RegExp(`.*${escapeRegex(path)}$`);
 }
 
-const cohortListPaths = ['/mock-api/cohorts', '/synthetic/synthea/list-all-cohorts', '/list-all-cohorts'];
-const jobsPaths = ['/mock-api/generation-jobs', '/synthetic/synthea/synthetic-patients/jobs', '/synthetic-patients/jobs'];
-const modelsPaths = ['/mock-api/models', '/modeling/models', '/models'];
-const runsPaths = ['/mock-api/runs', '/modeling/runs', '/runs'];
-const copilotStatusPaths = ['/mock-api/copilot/status', '/mcp/health', '/health'];
-const copilotMessagesPaths = ['/mock-api/copilot/messages', '/mcp/messages'];
-const patientsListPaths = ['/stats/patients', '/patients'];
+const cohortListPaths = ['/mock-api/cohorts'];
+const jobsPaths = ['/mock-api/generation-jobs'];
+const modelsPaths = ['/mock-api/models'];
+const runsPaths = ['/mock-api/runs'];
+const copilotStatusPaths = ['/mock-api/copilot/status'];
+const copilotMessagesPaths = ['/mock-api/copilot/messages'];
 
 export const handlers = [
   ...cohortListPaths.map((path) =>
@@ -61,17 +60,6 @@ export const handlers = [
     return HttpResponse.json({ patients: cohortPatientFixtures[cohortId] ?? [] });
   }),
 
-  ...patientsListPaths.map((path) =>
-    http.get(matchPath(path), async ({ request }) => {
-      await withLatency();
-      const cohortId = new URL(request.url).searchParams.get('cohort_id');
-      if (!cohortId) {
-        return HttpResponse.json({ patients: Object.values(cohortPatientFixtures).flat() });
-      }
-      return HttpResponse.json({ patients: cohortPatientFixtures[cohortId] ?? [] });
-    }),
-  ),
-
   http.get('/mock-api/patients/:patientId', async ({ params }) => {
     await withLatency();
     const patientId = String(params.patientId);
@@ -92,42 +80,6 @@ export const handlers = [
     });
   }),
 
-  http.get(/.*\/stats\/patients\/.+$/, async ({ request }) => {
-    await withLatency();
-    const patientId = new URL(request.url).pathname.split('/').pop() ?? '';
-    const patient = Object.values(cohortPatientFixtures)
-      .flat()
-      .find((item) => item.patientId === patientId);
-    if (!patient) {
-      return HttpResponse.json({ message: 'not found' }, { status: 404 });
-    }
-    return HttpResponse.json({
-      ...patient,
-      conditions: ['Chronic obstructive pulmonary disease', 'Hypertension'],
-      observations: ['Body Mass Index', 'Tobacco smoking status'],
-      medications: ['Albuterol 90 MCG/ACT inhaler'],
-      lastEncounterDate: '2026-02-01',
-    });
-  }),
-
-  http.get(/.*\/patients\/[^/]+$/, async ({ request }) => {
-    await withLatency();
-    const patientId = new URL(request.url).pathname.split('/').pop() ?? '';
-    const patient = Object.values(cohortPatientFixtures)
-      .flat()
-      .find((item) => item.patientId === patientId);
-    if (!patient) {
-      return HttpResponse.json({ message: 'not found' }, { status: 404 });
-    }
-    return HttpResponse.json({
-      ...patient,
-      conditions: ['Chronic obstructive pulmonary disease', 'Hypertension'],
-      observations: ['Body Mass Index', 'Tobacco smoking status'],
-      medications: ['Albuterol 90 MCG/ACT inhaler'],
-      lastEncounterDate: '2026-02-01',
-    });
-  }),
-
   ...modelsPaths.map((path) =>
     http.get(matchPath(path), async () => {
       await withLatency();
@@ -138,16 +90,6 @@ export const handlers = [
   http.get('/mock-api/models/:imageTag', async ({ params }) => {
     await withLatency();
     const imageTag = decodeURIComponent(String(params.imageTag));
-    const model = modelFixtures.find((item) => item.imageTag === imageTag);
-    if (!model) {
-      return HttpResponse.json({ message: 'not found' }, { status: 404 });
-    }
-    return HttpResponse.json(model);
-  }),
-
-  http.get(/.*\/modeling\/models\/.+$/, async ({ request }) => {
-    await withLatency();
-    const imageTag = decodeURIComponent(new URL(request.url).pathname.split('/').pop() ?? '');
     const model = modelFixtures.find((item) => item.imageTag === imageTag);
     if (!model) {
       return HttpResponse.json({ message: 'not found' }, { status: 404 });
@@ -183,16 +125,6 @@ export const handlers = [
   http.get('/mock-api/runs/:runId', async ({ params }) => {
     await withLatency();
     const runId = String(params.runId);
-    const run = runFixtures.find((item) => item.runId === runId);
-    if (!run) {
-      return HttpResponse.json({ message: 'not found' }, { status: 404 });
-    }
-    return HttpResponse.json(run);
-  }),
-
-  http.get(/.*\/modeling\/runs\/.+$/, async ({ request }) => {
-    await withLatency();
-    const runId = new URL(request.url).pathname.split('/').pop() ?? '';
     const run = runFixtures.find((item) => item.runId === runId);
     if (!run) {
       return HttpResponse.json({ message: 'not found' }, { status: 404 });

@@ -31,24 +31,15 @@ function pathFor(mode: ServiceMode, key: keyof typeof endpointPathMap, cohortId?
   return template.replace(':cohortId', cohortId);
 }
 
-function patientDetailPath(mode: ServiceMode, patientId: string) {
-  if (mode === 'router') {
-    return `/stats/patients/${patientId}`;
-  }
+function patientDetailPath(patientId: string) {
   return `/patients/${patientId}`;
 }
 
-function modelDetailPath(mode: ServiceMode, imageTag: string) {
-  if (mode === 'router') {
-    return `/modeling/models/${encodeURIComponent(imageTag)}`;
-  }
+function modelDetailPath(imageTag: string) {
   return `/models/${encodeURIComponent(imageTag)}`;
 }
 
-function runDetailPath(mode: ServiceMode, runId: string) {
-  if (mode === 'router' || mode === 'hybrid') {
-    return `/modeling/runs/${runId}`;
-  }
+function runDetailPath(runId: string) {
   return `/runs/${runId}`;
 }
 
@@ -73,6 +64,10 @@ function buildCohortService(mode: ServiceMode): CohortService {
       return rows.map(mapGenerationJob);
     },
     async createGenerationIntent(payload: CohortGenerationIntent) {
+      if (mode === 'direct') {
+        throw new Error('Direct mode is currently read-only. Switch to mock mode for generation intent creation.');
+      }
+
       const path = pathFor(mode, 'createGenerationIntent');
       const response = await fetchJson<Record<string, unknown>>(join(registry.cohortsBaseUrl, path), {
         method: 'POST',
@@ -88,26 +83,16 @@ function buildPatientService(mode: ServiceMode): PatientService {
 
   return {
     async listPatientsByCohort(cohortId) {
-      if (mode !== 'mock') {
-        const basePath = mode === 'router' ? '/stats/patients' : '/patients';
-        const response = await fetchJson<Record<string, unknown>>(
-          join(registry.patientsBaseUrl, `${basePath}?cohort_id=${encodeURIComponent(cohortId)}`),
-        );
-        const rows =
-          (response.patients as Record<string, unknown>[]) ??
-          (response.data as Record<string, unknown>[]) ??
-          [];
-        return rows.map(mapPatientSummary);
-      }
-
-      const path = pathFor('mock', 'listPatientsByCohort', cohortId);
-      const response = await fetchJson<Record<string, unknown>>(join(registry.patientsBaseUrl, path));
+      const path = pathFor(mode, 'listPatientsByCohort', cohortId);
+      const requestPath =
+        mode === 'direct' ? `${path}?cohort_id=${encodeURIComponent(cohortId)}` : path;
+      const response = await fetchJson<Record<string, unknown>>(join(registry.patientsBaseUrl, requestPath));
       const rows = (response.patients as Record<string, unknown>[]) ?? (response.data as Record<string, unknown>[]) ?? [];
       return rows.map(mapPatientSummary);
     },
     async getPatientRecord(patientId) {
       const response = await fetchJson<Record<string, unknown>>(
-        join(registry.patientsBaseUrl, patientDetailPath(mode, patientId)),
+        join(registry.patientsBaseUrl, patientDetailPath(patientId)),
       );
       return {
         ...mapPatientSummary(response),
@@ -132,7 +117,7 @@ function buildModelService(mode: ServiceMode): ModelService {
     },
     async getModelByImageTag(imageTag) {
       const response = await fetchJson<Record<string, unknown>>(
-        join(registry.modelsBaseUrl, modelDetailPath(mode, imageTag)),
+        join(registry.modelsBaseUrl, modelDetailPath(imageTag)),
       );
       return mapModelDescriptor(response);
     },
@@ -144,18 +129,30 @@ function buildRunService(mode: ServiceMode): RunService {
 
   return {
     async listRuns() {
+      if (mode === 'direct') {
+        return [];
+      }
+
       const path = pathFor(mode, 'listRuns');
       const response = await fetchJson<Record<string, unknown>>(join(registry.runsBaseUrl, path));
       const rows = (response.runs as Record<string, unknown>[]) ?? (response.data as Record<string, unknown>[]) ?? [];
       return rows.map(mapRunRecord);
     },
     async getRunById(runId) {
+      if (mode === 'direct') {
+        return null;
+      }
+
       const response = await fetchJson<Record<string, unknown>>(
-        join(registry.runsBaseUrl, runDetailPath(mode, runId)),
+        join(registry.runsBaseUrl, runDetailPath(runId)),
       );
       return mapRunRecord(response);
     },
     async createRunIntent(payload: ModelRunRequest) {
+      if (mode === 'direct') {
+        throw new Error('Direct mode is currently read-only. Switch to mock mode for run intent creation.');
+      }
+
       const path = pathFor(mode, 'createRunIntent');
       const response = await fetchJson<Record<string, unknown>>(join(registry.runsBaseUrl, path), {
         method: 'POST',
@@ -180,6 +177,10 @@ function buildCopilotService(mode: ServiceMode): CopilotService {
       };
     },
     async listMessages() {
+      if (mode === 'direct') {
+        return [];
+      }
+
       const path = pathFor(mode, 'copilotMessages');
       const response = await fetchJson<Record<string, unknown>>(join(registry.copilotBaseUrl, path));
       return ((response.messages as Array<Record<string, unknown>>) ?? []).map((item) => ({

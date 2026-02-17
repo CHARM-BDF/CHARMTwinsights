@@ -9,9 +9,24 @@ describe('SettingsPage integration', () => {
     renderWithProviders(<SettingsPage />);
 
     const endpointMode = screen.getByLabelText('Endpoint Mode');
-    await user.selectOptions(endpointMode, 'router');
+    await user.selectOptions(endpointMode, 'direct');
 
     const stored = localStorage.getItem('twinsight_ui_settings') ?? '{}';
-    expect(JSON.parse(stored).serviceMode).toBe('router');
+    expect(JSON.parse(stored).serviceMode).toBe('direct');
+  });
+
+  it('falls back to mock mode when legacy mode values are found in localStorage', async () => {
+    localStorage.setItem(
+      'twinsight_ui_settings',
+      JSON.stringify({
+        serviceMode: 'router',
+        featureFlags: {},
+      }),
+    );
+
+    renderWithProviders(<SettingsPage />);
+
+    const endpointMode = screen.getByLabelText('Endpoint Mode');
+    expect(endpointMode).toHaveValue('mock');
   });
 });

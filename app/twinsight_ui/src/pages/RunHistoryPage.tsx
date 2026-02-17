@@ -13,12 +13,16 @@ import { TextInput } from '../components/TextInput';
 import { useModels } from '../features/models/hooks';
 import { useCreateRunIntent, useRuns } from '../features/runs/hooks';
 import { modelRunIntentSchema, type ModelRunIntent } from '../lib/contracts/schemas';
+import { useSettings } from '../app/settings-context';
 import styles from './RunHistoryPage.module.css';
 
 export function RunHistoryPage() {
+  const { serviceMode } = useSettings();
   const runsQuery = useRuns();
   const modelsQuery = useModels();
   const createRunMutation = useCreateRunIntent();
+  const mutationErrorMessage =
+    createRunMutation.error instanceof Error ? createRunMutation.error.message : 'Unable to queue run intent.';
 
   const form = useForm<ModelRunIntent>({
     resolver: zodResolver(modelRunIntentSchema),
@@ -44,7 +48,7 @@ export function RunHistoryPage() {
         description="Track model runs, inspect result previews, and create new execution intents from validated payloads."
       />
 
-      {createRunMutation.isError ? <ErrorBanner message="Unable to queue run intent." /> : null}
+      {createRunMutation.isError ? <ErrorBanner message={mutationErrorMessage} /> : null}
 
       <FilterPanel title="Create Run Intent">
         <form className={styles.intentForm} onSubmit={onSubmit}>
@@ -70,9 +74,13 @@ export function RunHistoryPage() {
           <TextInput id="cohortId" label="Cohort ID" {...form.register('cohortId')} />
           <TextInput id="patientId" label="Patient ID" {...form.register('patientId')} />
 
-          <PrimaryButton type="submit" disabled={createRunMutation.isPending}>
+          <PrimaryButton type="submit" disabled={createRunMutation.isPending || serviceMode === 'direct'}>
             {createRunMutation.isPending ? 'Submitting...' : 'Create Run Intent'}
           </PrimaryButton>
+
+          {serviceMode === 'direct' ? (
+            <p className={styles.modeHint}>Switch to mock mode to submit run intents in this phase.</p>
+          ) : null}
         </form>
       </FilterPanel>
 

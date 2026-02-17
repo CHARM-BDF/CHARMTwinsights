@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { ServiceMode } from '../lib/api/endpointRegistry';
+import { isServiceMode, type ServiceMode } from '../lib/api/endpointRegistry';
 
 export type FeatureFlags = {
   uiPrimary: boolean;
@@ -16,9 +16,11 @@ type SettingsState = {
 };
 
 const STORAGE_KEY = 'twinsight_ui_settings';
+const configuredServiceMode = import.meta.env.VITE_SERVICE_MODE;
+const envServiceMode: ServiceMode = isServiceMode(configuredServiceMode) ? configuredServiceMode : 'mock';
 
 const defaultState = {
-  serviceMode: 'mock' as ServiceMode,
+  serviceMode: envServiceMode,
   featureFlags: {
     uiPrimary: import.meta.env.VITE_UI_PRIMARY === 'true',
     copilotEnabled: false,
@@ -34,12 +36,25 @@ function loadInitialState() {
   }
 
   try {
-    const parsed = JSON.parse(stored);
+    const parsed = JSON.parse(stored) as unknown;
+    const parsedRecord =
+      typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
+    const parsedFlags =
+      typeof parsedRecord.featureFlags === 'object' && parsedRecord.featureFlags !== null
+        ? (parsedRecord.featureFlags as Record<string, unknown>)
+        : {};
+    const parsedMode = isServiceMode(parsedRecord.serviceMode) ? parsedRecord.serviceMode : defaultState.serviceMode;
     return {
-      serviceMode: (parsed.serviceMode ?? defaultState.serviceMode) as ServiceMode,
+      serviceMode: parsedMode,
       featureFlags: {
-        ...defaultState.featureFlags,
-        ...(parsed.featureFlags ?? {}),
+        uiPrimary:
+          typeof parsedFlags.uiPrimary === 'boolean'
+            ? parsedFlags.uiPrimary
+            : defaultState.featureFlags.uiPrimary,
+        copilotEnabled:
+          typeof parsedFlags.copilotEnabled === 'boolean'
+            ? parsedFlags.copilotEnabled
+            : defaultState.featureFlags.copilotEnabled,
       },
     };
   } catch {

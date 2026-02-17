@@ -9,6 +9,7 @@ import { JsonPreview } from '../components/JsonPreview';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { cohortGenerationIntentSchema, type CohortGenerationIntent } from '../lib/contracts/schemas';
 import { useCreateGenerationIntent } from '../features/cohorts/hooks';
+import { useSettings } from '../app/settings-context';
 import styles from './CohortBuilderPage.module.css';
 
 const stateOptions = [
@@ -19,7 +20,10 @@ const stateOptions = [
 ];
 
 export function CohortBuilderPage() {
+  const { serviceMode } = useSettings();
   const createMutation = useCreateGenerationIntent();
+  const mutationErrorMessage =
+    createMutation.error instanceof Error ? createMutation.error.message : 'Unable to queue generation intent.';
 
   const form = useForm<CohortGenerationIntent>({
     resolver: zodResolver(cohortGenerationIntentSchema),
@@ -47,7 +51,7 @@ export function CohortBuilderPage() {
         description="Create synthetic cohort generation intents with demographic constraints and audit-ready payload previews."
       />
 
-      {createMutation.isError ? <ErrorBanner message="Unable to queue generation intent." /> : null}
+      {createMutation.isError ? <ErrorBanner message={mutationErrorMessage} /> : null}
 
       <div className={styles.layout}>
         <form className={styles.form} onSubmit={onSubmit} noValidate>
@@ -119,9 +123,13 @@ export function CohortBuilderPage() {
             onChange={(event) => form.setValue('usePopulationSampling', event.target.checked)}
           />
 
-          <PrimaryButton type="submit" disabled={createMutation.isPending}>
+          <PrimaryButton type="submit" disabled={createMutation.isPending || serviceMode === 'direct'}>
             {createMutation.isPending ? 'Submitting...' : 'Create Generation Intent'}
           </PrimaryButton>
+
+          {serviceMode === 'direct' ? (
+            <p className={styles.hint}>Switch to mock mode to submit generation intents in this phase.</p>
+          ) : null}
         </form>
 
         <aside className={styles.previewColumn}>

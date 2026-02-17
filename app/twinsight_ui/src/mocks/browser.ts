@@ -1,11 +1,6 @@
 import { installMockFetchFallback } from './fallback';
 
 export async function initializeMocking() {
-  const mode = import.meta.env.VITE_SERVICE_MODE ?? 'mock';
-  if (mode !== 'mock') {
-    return;
-  }
-
   if (typeof window === 'undefined') {
     return;
   }

@@ -1,4 +1,4 @@
-import type { SelectHTMLAttributes } from 'react';
+import { forwardRef, type SelectHTMLAttributes } from 'react';
 import styles from './Field.module.css';
 
 type Option = {
@@ -14,13 +14,16 @@ type Props = {
   error?: string;
 } & SelectHTMLAttributes<HTMLSelectElement>;
 
-export function SelectInput({ id, label, options, hint, error, ...rest }: Props) {
+export const SelectInput = forwardRef<HTMLSelectElement, Props>(function SelectInput(
+  { id, label, options, hint, error, ...rest },
+  ref,
+) {
   return (
     <div className={styles.field}>
       <label className={styles.label} htmlFor={id}>
         {label}
       </label>
-      <select id={id} className={styles.select} aria-invalid={Boolean(error)} {...rest}>
+      <select id={id} ref={ref} className={styles.select} aria-invalid={Boolean(error)} {...rest}>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -31,4 +34,4 @@ export function SelectInput({ id, label, options, hint, error, ...rest }: Props)
       {error ? <span className={styles.error}>{error}</span> : null}
     </div>
   );
-}
+});

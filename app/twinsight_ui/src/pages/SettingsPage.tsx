@@ -2,7 +2,7 @@ import { PageHeader } from '../components/PageHeader';
 import { CheckboxInput } from '../components/CheckboxInput';
 import { SelectInput } from '../components/SelectInput';
 import { useSettings } from '../app/settings-context';
-import type { ServiceMode } from '../lib/api/endpointRegistry';
+import { isServiceMode } from '../lib/api/endpointRegistry';
 import styles from './SettingsPage.module.css';
 
 export function SettingsPage() {
@@ -20,14 +20,20 @@ export function SettingsPage() {
           id="serviceMode"
           label="Endpoint Mode"
           value={serviceMode}
-          onChange={(event) => setServiceMode(event.target.value as ServiceMode)}
+          onChange={(event) => {
+            if (isServiceMode(event.target.value)) {
+              setServiceMode(event.target.value);
+            }
+          }}
           options={[
             { value: 'mock', label: 'Mock' },
-            { value: 'router', label: 'Router' },
             { value: 'direct', label: 'Direct' },
-            { value: 'hybrid', label: 'Hybrid' },
           ]}
         />
+
+        <p className={styles.modeHint}>
+          Direct mode currently enables live read workflows for cohorts and models. Write intents are intentionally disabled in this phase.
+        </p>
 
         <CheckboxInput
           id="uiPrimary"

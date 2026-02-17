@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes } from 'react';
+import { forwardRef, type InputHTMLAttributes } from 'react';
 import styles from './Field.module.css';
 
 type Props = {
@@ -7,14 +7,17 @@ type Props = {
   hint?: string;
 } & InputHTMLAttributes<HTMLInputElement>;
 
-export function CheckboxInput({ id, label, hint, ...rest }: Props) {
+export const CheckboxInput = forwardRef<HTMLInputElement, Props>(function CheckboxInput(
+  { id, label, hint, ...rest },
+  ref,
+) {
   return (
     <div className={styles.field}>
       <div className={styles.checkboxRow}>
-        <input id={id} type="checkbox" {...rest} />
+        <input id={id} ref={ref} type="checkbox" {...rest} />
         <label htmlFor={id}>{label}</label>
       </div>
       {hint ? <span className={styles.hint}>{hint}</span> : null}
     </div>
   );
-}
+});

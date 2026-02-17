@@ -7,3 +7,8 @@
   display: grid;
   gap: var(--space-4);
 }
+
+.modeHint {
+  margin: 0;
+  color: var(--color-text-secondary);
+}

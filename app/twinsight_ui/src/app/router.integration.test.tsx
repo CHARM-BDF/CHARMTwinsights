@@ -7,14 +7,8 @@ import { DashboardPage } from '../pages/DashboardPage';
 import { SettingsPage } from '../pages/SettingsPage';
 
 describe('router integration', () => {
-  it('loads dashboard and settings routes', async () => {
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-      },
-    });
-
-    const router = createMemoryRouter(
+  function createTestRouter(initialEntry: '/dashboard' | '/settings') {
+    return createMemoryRouter(
       [
         {
           path: '/',
@@ -25,8 +19,18 @@ describe('router integration', () => {
           ],
         },
       ],
-      { initialEntries: ['/dashboard'] },
+      { initialEntries: [initialEntry] },
     );
+  }
+
+  it('loads dashboard route', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+
+    const router = createTestRouter('/dashboard');
 
     render(
       <AppProviders queryClient={queryClient}>
@@ -35,8 +39,23 @@ describe('router integration', () => {
     );
 
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
+  });
 
-    await router.navigate('/settings');
+  it('loads settings route', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+
+    const router = createTestRouter('/settings');
+
+    render(
+      <AppProviders queryClient={queryClient}>
+        <RouterProvider router={router} />
+      </AppProviders>,
+    );
+
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeInTheDocument();
   });
 });

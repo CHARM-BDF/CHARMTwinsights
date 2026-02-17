@@ -4,6 +4,7 @@ import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { ErrorBanner } from '../components/ErrorBanner';
 import { useCohorts, useGenerationJobs } from '../features/cohorts/hooks';
 import { useRuns } from '../features/runs/hooks';
+import { ConnectionHealthPanel } from '../components/ConnectionHealthPanel';
 import styles from './DashboardPage.module.css';
 
 export function DashboardPage() {
@@ -15,10 +16,7 @@ export function DashboardPage() {
     return <LoadingSkeleton lines={6} />;
   }
 
-  if (cohortsQuery.isError || jobsQuery.isError || runsQuery.isError) {
-    return <ErrorBanner message="Unable to load one or more dashboard data feeds." />;
-  }
-
+  const hasDataErrors = cohortsQuery.isError || jobsQuery.isError || runsQuery.isError;
   const activeJobs = jobsQuery.data?.filter((item) => item.status === 'running').length ?? 0;
   const completedRuns = runsQuery.data?.filter((item) => item.status === 'completed').length ?? 0;
 
@@ -28,6 +26,10 @@ export function DashboardPage() {
         title="Dashboard"
         description="Operational overview for cohort generation, model execution, and analytic run activity."
       />
+
+      {hasDataErrors ? (
+        <ErrorBanner message="One or more dashboard feeds are unavailable. Health checks below can help identify endpoint issues." />
+      ) : null}
 
       <section className={styles.cardGrid} aria-label="Dashboard metrics">
         <article>
@@ -46,6 +48,10 @@ export function DashboardPage() {
           <span>Model runs with available outputs</span>
         </article>
       </section>
+
+      <div className={styles.healthPanel}>
+        <ConnectionHealthPanel />
+      </div>
 
       <section className={styles.quickActions} aria-label="Quick actions">
         <h2>Quick Actions</h2>
