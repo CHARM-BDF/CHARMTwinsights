@@ -28,4 +28,10 @@ app/atlas/vocabulary_files/
 # rstudio stuff
 *.Rproj*
 
+# Node / frontend artifacts
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
 

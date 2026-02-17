@@ -1,0 +1,14 @@
+.panel {
+  margin-top: var(--space-5);
+}
+
+.panel h3 {
+  margin: 0;
+}
+
+.grid {
+  margin-top: var(--space-3);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-4);
+}

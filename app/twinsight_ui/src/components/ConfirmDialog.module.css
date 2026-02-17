@@ -1,0 +1,24 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 30, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.dialog {
+  background: white;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  padding: var(--space-5);
+  width: min(480px, calc(100% - 32px));
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}

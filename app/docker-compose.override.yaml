@@ -32,3 +32,10 @@ services:
       - "8005:80"
     environment:
       - VITE_API_BASE=http://localhost:8000  # Use localhost for development access
+
+  twinsight_ui:
+    ports:
+      - "8010:80"
+    environment:
+      - VITE_UI_PRIMARY=${VITE_UI_PRIMARY:-false}
+      - VITE_SERVICE_MODE=${VITE_SERVICE_MODE:-mock}

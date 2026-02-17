@@ -23,6 +23,18 @@ services:
     environment:
       - API_BASE=http://router:8000
 
+  twinsight_ui:
+    build:
+      context: ./twinsight_ui
+      args:
+        VITE_UI_PRIMARY: ${VITE_UI_PRIMARY:-false}
+        VITE_SERVICE_MODE: ${VITE_SERVICE_MODE:-mock}
+    ports:
+      - "8010:80"
+    environment:
+      - VITE_UI_PRIMARY=${VITE_UI_PRIMARY:-false}
+      - VITE_SERVICE_MODE=${VITE_SERVICE_MODE:-mock}
+
   router:
     build: ./router
     ports:

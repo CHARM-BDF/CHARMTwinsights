@@ -1,0 +1,20 @@
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  background: var(--color-background);
+}
+
+.mainColumn {
+  min-width: 0;
+}
+
+.main {
+  padding: var(--space-6);
+}
+
+@media (max-width: 960px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}

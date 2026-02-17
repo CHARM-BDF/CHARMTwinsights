@@ -1,0 +1,32 @@
+.button {
+  border-radius: 6px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--color-accent-strong);
+  outline-offset: 2px;
+}
+
+.primary {
+  background: var(--color-accent-strong);
+  color: white;
+}
+
+.primary:hover {
+  background: var(--color-accent-dark);
+}
+
+.secondary {
+  background: white;
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.secondary:hover {
+  background: var(--color-surface-muted);
+}

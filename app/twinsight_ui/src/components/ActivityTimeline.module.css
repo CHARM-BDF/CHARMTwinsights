@@ -1,0 +1,39 @@
+.wrapper {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: white;
+  padding: var(--space-4);
+}
+
+.wrapper h3 {
+  margin-top: 0;
+  margin-bottom: var(--space-3);
+}
+
+.wrapper ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.wrapper li {
+  border-left: 2px solid var(--color-accent-mid);
+  padding-left: var(--space-3);
+}
+
+.wrapper li div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.wrapper li span {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.wrapper li p {
+  margin: var(--space-1) 0 0;
+}

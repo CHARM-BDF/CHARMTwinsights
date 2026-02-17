@@ -1,0 +1,34 @@
+.wrapper {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: white;
+  padding: var(--space-4);
+}
+
+.wrapper h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-size-md);
+}
+
+.wrapper ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.wrapper li {
+  border: 1px solid var(--color-border-soft);
+  border-radius: 6px;
+  padding: var(--space-3);
+}
+
+.wrapper p {
+  margin: var(--space-2) 0 0;
+}
+
+.meta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}

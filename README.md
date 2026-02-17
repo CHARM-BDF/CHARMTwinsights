@@ -60,6 +60,8 @@ CHARMTwinsight is designed as a microservices architecture managed with `docker 
 
 **`mcp_server`**: Model Context Protocol (MCP) server for cohort generation, patient querying, and model access
 
+**`twinsight_ui`**: React + TypeScript workflow UI foundation for cohort generation, cohort exploration, model catalog, run history, and a copilot scaffold.
+
 All services are containerized, most developed with python>=3.13.
 
 ## Installation and Usage
@@ -290,6 +292,7 @@ For development purposes, each service is exposed to the localhost on independen
 - synthea_server: localhost:8003
 - model_server: localhost:8004
 - mcp_server: localhost:8006
+- twinsight_ui: localhost:8010
 
 ### Accessing HAPI FHIR Server
 
