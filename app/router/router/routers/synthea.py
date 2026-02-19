@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Body
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
+from datetime import datetime
 import httpx
 import logging
+import re
 
 from ..config import settings  # expects settings.synthea_server_url
 
@@ -225,6 +227,41 @@ class SyntheaAsyncRequest(BaseModel):
     state: Optional[str] = Field(None, description="US state for patient generation")
     city: Optional[str] = Field(None, description="US city for patient generation (requires state)")
     use_population_sampling: bool = Field(True, description="Sample states by population if no state specified")
+    
+    @field_validator('state', 'city', mode='before')
+    @classmethod
+    def normalize_optional_strings(cls, v):
+        """Treat 'string' placeholder from Swagger UI as None"""
+        if v == "string" or v == "":
+            return None
+        return v
+    
+    @field_validator('cohort_id')
+    @classmethod
+    def validate_cohort_id(cls, v: str) -> str:
+        """Validate and generate cohort_id if not specified.
+        
+        If cohort_id is 'default' or empty, generates a unique ID in the format:
+        Cohort-DayName-Date-Timestamp (e.g., Cohort-Monday-20260218-072436)
+        """
+        # Generate dynamic ID if user didn't specify one
+        if v == "default" or v == "" or v == "string":
+            now = datetime.now()
+            day_name = now.strftime("%A")  # e.g., "Monday"
+            date_str = now.strftime("%Y%m%d")  # e.g., "20260218"
+            time_str = now.strftime("%H%M%S")  # e.g., "072436"
+            v = f"Cohort-{day_name}-{date_str}-{time_str}"
+        
+        # FHIR resource ID pattern: [A-Za-z0-9\-\.]{1,64}
+        fhir_id_pattern = r'^[A-Za-z0-9\-\.]{1,64}$'
+        
+        if not re.match(fhir_id_pattern, v):
+            raise ValueError(
+                f"cohort_id '{v}' is not a valid FHIR resource ID. "
+                f"Must contain only letters, numbers, hyphens, and periods, "
+                f"and be 1-64 characters long. Underscores are not allowed."
+            )
+        return v
 
 
 # New async job management endpoints

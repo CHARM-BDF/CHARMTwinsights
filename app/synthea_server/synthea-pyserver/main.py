@@ -8,6 +8,7 @@ import shutil
 import json
 import glob
 import requests
+import httpx
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, List, Set
 import re
@@ -149,7 +150,8 @@ def sample_states_by_population(num_patients: int) -> Dict[str, int]:
 @app.get("/")
 def redirect_to_docs():
     """Redirects the root URL to the API documentation."""
-    return JSONResponse(status_code=307, content={"message": "Redirecting to /docs for API documentation."}, headers={"Location": "/docs"})
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
@@ -613,6 +615,73 @@ def fetch_all_groups(hapi_url):
         return []
 
 
+async def fetch_cohort_groups_async(hapi_url: str) -> List[Dict]:
+    """Fetches cohort Group resources from HAPI FHIR server using async HTTP.
+    
+    Optimizations:
+    - Uses async httpx for non-blocking requests
+    - Uses _elements to fetch only needed fields (id, meta, member)
+    
+    Note: Server-side tag filtering with wildcard codes is not supported by HAPI FHIR,
+    so we fetch all groups and filter client-side for cohort tags.
+    
+    Args:
+        hapi_url: Base URL of the HAPI FHIR server.
+    Returns:
+        A list of Group resources with cohort information.
+    """
+    all_groups = []
+    # Fetch all groups with only needed elements (no server-side tag filter - HAPI doesn't support wildcard)
+    base_url = f"{hapi_url.rstrip('/')}/Group"
+    params = {
+        "_elements": "id,meta,member",  # Only fetch needed fields
+        "_count": "500"
+    }
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # First request
+        try:
+            response = await client.get(base_url, params=params)
+            response.raise_for_status()
+        except Exception as e:
+            logger.error(f"Error fetching cohort groups: {e}")
+            return []
+        
+        bundle = response.json()
+        
+        # Process first page
+        if "entry" in bundle:
+            all_groups.extend([entry["resource"] for entry in bundle["entry"]])
+            logger.info(f"Retrieved {len(bundle['entry'])} cohort groups from first page")
+        
+        # Handle pagination
+        while True:
+            next_url = None
+            if "link" in bundle:
+                for link in bundle["link"]:
+                    if link.get("relation") == "next":
+                        next_url = link.get("url")
+                        break
+            
+            if not next_url:
+                break
+            
+            try:
+                response = await client.get(next_url)
+                response.raise_for_status()
+                bundle = response.json()
+                
+                if "entry" in bundle:
+                    all_groups.extend([entry["resource"] for entry in bundle["entry"]])
+                    logger.info(f"Retrieved {len(bundle['entry'])} more cohort groups. Total: {len(all_groups)}")
+            except Exception as e:
+                logger.error(f"Error fetching next page: {e}")
+                break
+    
+    logger.info(f"Total cohort groups retrieved: {len(all_groups)}")
+    return all_groups
+
+
 def fetch_all_patients(hapi_url):
     """ Fetches all FHIR Patient resources from the HAPI FHIR server.
     Args:
@@ -851,10 +920,30 @@ class SyntheaRequest(BaseModel):
     city: Optional[str] = Field(None, description="US city for patient generation (requires state)")
     use_population_sampling: bool = Field(True, description="Sample states by population if no state specified")
     
+    @field_validator('state', 'city', mode='before')
+    @classmethod
+    def normalize_optional_strings(cls, v):
+        """Treat 'string' placeholder from Swagger UI as None"""
+        if v == "string" or v == "":
+            return None
+        return v
+    
     @field_validator('cohort_id')
     @classmethod
     def validate_cohort_id(cls, v: str) -> str:
-        """Validate that cohort_id follows FHIR resource ID rules"""
+        """Validate and generate cohort_id if not specified.
+        
+        If cohort_id is 'default' or empty, generates a unique ID in the format:
+        Cohort-DayName-Date-Timestamp (e.g., Cohort-Monday-20260218-072436)
+        """
+        # Generate dynamic ID if user didn't specify one
+        if v == "default" or v == "" or v == "string":
+            now = datetime.now()
+            day_name = now.strftime("%A")  # e.g., "Monday"
+            date_str = now.strftime("%Y%m%d")  # e.g., "20260218"
+            time_str = now.strftime("%H%M%S")  # e.g., "072436"
+            v = f"Cohort-{day_name}-{date_str}-{time_str}"
+        
         # FHIR resource ID pattern: [A-Za-z0-9\-\.]{1,64}
         fhir_id_pattern = r'^[A-Za-z0-9\-\.]{1,64}$'
         
@@ -1503,20 +1592,24 @@ async def get_module_content(module_name: str):
 @app.get("/list-all-cohorts", response_class=JSONResponse)
 async def list_all_cohorts():
     """ Lists all cohorts stored in the HAPI FHIR server along with the number of patients in each cohort and their source.
+    
+    Optimized version using async HTTP and server-side filtering.
+    
     Returns:
         A JSON object containing a list of cohorts with their IDs, patient counts, and sources.
     """
     hapi_url = "http://hapi:8080/fhir"
     
-    # Check if the HAPI server is running
-    try:
-        r = requests.get(hapi_url + "/$meta")
-        r.raise_for_status()
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable. (It may be starting up.)"})
+    # Check if the HAPI server is running (async)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            r = await client.get(hapi_url + "/$meta")
+            r.raise_for_status()
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": "HAPI FHIR server is not reachable. (It may be starting up.)"})
     
-    # Fetch all groups from the HAPI server
-    all_groups = fetch_all_groups(hapi_url)
+    # Fetch cohort groups using optimized async function
+    all_groups = await fetch_cohort_groups_async(hapi_url)
     
     # Process the groups to extract cohort information
     cohorts = []
@@ -1526,7 +1619,6 @@ async def list_all_cohorts():
         source = None
         creation_time = None
         
-        # First check if this is a cohort by looking at the ID directly
         group_id = group.get("id")
         
         # Look for cohort information in tags
@@ -1540,32 +1632,24 @@ async def list_all_cohorts():
                     creation_time = tag.get("code")
                 # Also check for datatype tag to identify synthetic cohorts
                 if tag.get("system") == "urn:charm:datatype" and tag.get("code") == "synthetic":
-                    # If we have a synthetic datatype but no cohort ID, use the group ID
                     if not cohort_id and group_id:
                         cohort_id = group_id
-                        print(f"Using group ID {group_id} as cohort ID for synthetic cohort")
+                        logger.info(f"Using group ID {group_id} as cohort ID for synthetic cohort")
         
         # Skip if this is not a cohort group
         if not cohort_id:
             continue
         
         # Count the number of patients in the group
-        patient_count = 0
-        if "member" in group:
-            patient_count = len(group["member"])
+        patient_count = len(group.get("member", []))
         
         # Add cohort info to the list
         cohort_info = {
             "cohort_id": cohort_id,
             "patient_count": patient_count,
-            "source": source or "unknown"
+            "source": source or "unknown",
+            "created_at": creation_time or "unknown"
         }
-        
-        # Include creation time if available
-        if creation_time:
-            cohort_info["created_at"] = creation_time
-        else:
-            cohort_info["created_at"] = "unknown"
             
         cohorts.append(cohort_info)
     
