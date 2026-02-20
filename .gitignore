@@ -29,3 +29,6 @@ app/atlas/vocabulary_files/
 *.Rproj*
 
 
+app/timeseries_model/download_data.py
+app/timeseries_model/test_model_mock.py
+app/timeseries_model/test_model_real_data.py
