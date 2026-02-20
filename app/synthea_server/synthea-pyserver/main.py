@@ -849,15 +849,16 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
         return False, error_info, None
     
 
-def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
+def upsert_group(hapi_url, cohort_id, new_patient_ids, tags, generation_settings=None):
     """ Upserts a FHIR Group resource with the given cohort ID and patient IDs.
     If the Group already exists, it merges the new patient IDs with existing members.
-    If creating a new Group, adds a creation timestamp tag.
+    If creating a new Group, adds a creation timestamp tag and generation settings.
     Args:
         hapi_url: Base URL of the HAPI FHIR server (e.g., http://hapi:8080/fhir).
         cohort_id: The ID of the cohort to create or update.
         new_patient_ids: A set of new patient IDs to add to the Group.
         tags: Optional dictionary of tags to apply to the Group resource.
+        generation_settings: Optional dict with cohort generation settings (num_patients, num_years, gender, state, city, min_age, max_age).
     Returns:
         The response text from the HAPI FHIR server after the upsert operation.
     Raises:
@@ -909,6 +910,23 @@ def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
             "code": current_time
         })
         logger.info(f"Adding creation timestamp {current_time} to new cohort {cohort_id}")
+        
+        # Add generation settings tags for new cohorts
+        if generation_settings:
+            settings_tags = [
+                {"system": "urn:charm:setting:num_patients", "code": str(generation_settings.get("num_patients", ""))},
+                {"system": "urn:charm:setting:records_timespan", "code": str(generation_settings.get("num_years", ""))},
+                {"system": "urn:charm:setting:gender", "code": str(generation_settings.get("gender", ""))},
+                {"system": "urn:charm:setting:min_age", "code": str(generation_settings.get("min_age", ""))},
+                {"system": "urn:charm:setting:max_age", "code": str(generation_settings.get("max_age", ""))},
+            ]
+            # Only add state/city if they were specified
+            if generation_settings.get("state"):
+                settings_tags.append({"system": "urn:charm:setting:state", "code": str(generation_settings.get("state"))})
+            if generation_settings.get("city"):
+                settings_tags.append({"system": "urn:charm:setting:city", "code": str(generation_settings.get("city"))})
+            group["meta"]["tag"].extend(settings_tags)
+            logger.info(f"Adding generation settings to cohort {cohort_id}")
     if tags:
         apply_tags(group, tags)
     r = requests.put(url, json=group, headers={"Content-Type": "application/fhir+json"})
@@ -1182,8 +1200,17 @@ async def process_generation_job(job_id: str):
             
             # Update cohort with current patient set after each chunk
             job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Updating cohort"
+            generation_settings = {
+                "num_patients": request_data["num_patients"],
+                "num_years": request_data["num_years"],
+                "gender": request_data["gender"],
+                "min_age": request_data["min_age"],
+                "max_age": request_data["max_age"],
+                "state": request_data.get("state"),
+                "city": request_data.get("city")
+            }
             try:
-                upsert_group(hapi_url, request_data["cohort_id"], all_patient_ids, tagset)
+                upsert_group(hapi_url, request_data["cohort_id"], all_patient_ids, tagset, generation_settings)
                 logger.info(f"Job {job_id}: Updated cohort with {len(all_patient_ids)} patients after chunk {chunk['chunk_id']}")
             except Exception as e:
                 logger.error(f"Job {job_id}: Failed to update cohort after chunk {chunk['chunk_id']}: {str(e)}")
@@ -1396,7 +1423,9 @@ async def list_all_patients():
                     "gender": gender,
                     "ethnicity": ethnicity,
                     "birth_date": birth_date,
-                    "cohort_ids": cohort_ids
+                    "cohort_ids": cohort_ids,
+                    "pdf_url": f"/patient/{patient_id}/pdf",
+                    "fhir_url": f"/patient/{patient_id}/fhir"
                 }
                 
                 patient_list.append(patient_info)
@@ -1637,24 +1666,42 @@ async def list_all_cohorts():
     # Process the groups to extract cohort information
     cohorts = []
     for group in all_groups:
-        # Extract cohort ID, source, and creation time from tags
+        # Extract cohort ID, source, creation time, and generation settings from tags
         cohort_id = None
         source = None
         creation_time = None
+        generation_settings = {}
         
         group_id = group.get("id")
         
         # Look for cohort information in tags
         if "meta" in group and "tag" in group["meta"]:
             for tag in group["meta"]["tag"]:
-                if tag.get("system") == "urn:charm:cohort":
-                    cohort_id = tag.get("code")
-                if tag.get("system") == "urn:charm:source":
-                    source = tag.get("code")
-                if tag.get("system") == "urn:charm:created":
-                    creation_time = tag.get("code")
+                system = tag.get("system", "")
+                code = tag.get("code")
+                if system == "urn:charm:cohort":
+                    cohort_id = code
+                elif system == "urn:charm:source":
+                    source = code
+                elif system == "urn:charm:created":
+                    creation_time = code
+                # Extract generation settings
+                elif system == "urn:charm:setting:num_patients":
+                    generation_settings["num_patients"] = int(code) if code else None
+                elif system == "urn:charm:setting:records_timespan":
+                    generation_settings["records_timespan"] = int(code) if code else None
+                elif system == "urn:charm:setting:gender":
+                    generation_settings["gender"] = code
+                elif system == "urn:charm:setting:min_age":
+                    generation_settings["min_age"] = int(code) if code else None
+                elif system == "urn:charm:setting:max_age":
+                    generation_settings["max_age"] = int(code) if code else None
+                elif system == "urn:charm:setting:state":
+                    generation_settings["state"] = code
+                elif system == "urn:charm:setting:city":
+                    generation_settings["city"] = code
                 # Also check for datatype tag to identify synthetic cohorts
-                if tag.get("system") == "urn:charm:datatype" and tag.get("code") == "synthetic":
+                elif system == "urn:charm:datatype" and code == "synthetic":
                     if not cohort_id and group_id:
                         cohort_id = group_id
                         logger.info(f"Using group ID {group_id} as cohort ID for synthetic cohort")
@@ -1671,7 +1718,8 @@ async def list_all_cohorts():
             "cohort_id": cohort_id,
             "patient_count": patient_count,
             "source": source or "unknown",
-            "created_at": creation_time or "unknown"
+            "created_at": creation_time or "unknown",
+            "generation_settings": generation_settings if generation_settings else None
         }
             
         cohorts.append(cohort_info)
@@ -2639,7 +2687,7 @@ def generate_patient_pdf(patient_info: dict, patient_id: str) -> bytes:
     story.append(Paragraph("<i>Project: https://github.com/CHARM-BDF/CHARMTwinsights</i>", notice_style))
     story.append(Spacer(1, 4))
     story.append(Paragraph(f"<i>To regenerate this PDF: GET http://localhost:8003/patient/{patient_id}/pdf</i>", notice_style))
-    story.append(Paragraph(f"<i>To obtain the full FHIR data for this synthetic patient via HAPI FHIR: GET /Patient/{patient_id}/$everything</i>", notice_style))
+    story.append(Paragraph(f"<i>To obtain the full FHIR data for this synthetic patient: GET http://localhost:8003/patient/{patient_id}/fhir (or use HAPI FHIR: /Patient/{patient_id}/$everything)</i>", notice_style))
     story.append(Spacer(1, 12))
     
     # ===== SECTION 1: Personal Information =====
@@ -3131,6 +3179,78 @@ async def get_random_patient_full_data():
         return JSONResponse(status_code=500, content={"error": f"Error getting random patient: {str(e)}"})
 
 
+@app.get("/patient/{patient_id}/fhir", response_class=JSONResponse)
+async def get_patient_fhir(patient_id: str):
+    """
+    Get all FHIR data for a specific patient.
+    
+    Uses the $everything operation to fetch all resources related to the patient including:
+    - Patient demographics
+    - Encounters (hospital stays, visits)
+    - Conditions (diagnoses)
+    - Observations (lab results, vitals)
+    - Procedures
+    - MedicationRequests
+    - Immunizations
+    - CarePlans
+    - DiagnosticReports
+    - DocumentReferences
+    """
+    hapi_url = os.environ.get('HAPI_URL', "http://hapi:8080/fhir")
+    
+    try:
+        # Use the $everything operation to get all resources for this patient
+        everything_url = f"{hapi_url}/Patient/{patient_id}/$everything"
+        logger.info(f"Fetching all FHIR data for patient {patient_id} from: {everything_url}")
+        
+        all_resources = {"Patient": [], "Encounter": [], "Condition": [], "Observation": [], 
+                        "Procedure": [], "MedicationRequest": [], "MedicationAdministration": [],
+                        "Immunization": [], "CarePlan": [], "DiagnosticReport": [], 
+                        "DocumentReference": [], "Other": []}
+        
+        next_url = everything_url
+        while next_url:
+            r = requests.get(next_url, timeout=60)
+            if r.status_code == 404:
+                return JSONResponse(status_code=404, content={"error": f"Patient {patient_id} not found"})
+            if r.status_code != 200:
+                logger.error(f"Error fetching patient data: HTTP {r.status_code}")
+                return JSONResponse(status_code=r.status_code, content={"error": f"Error fetching patient data: HTTP {r.status_code}"})
+            
+            bundle = r.json()
+            
+            # Process entries
+            if "entry" in bundle:
+                for entry in bundle["entry"]:
+                    resource = entry.get("resource", {})
+                    resource_type = resource.get("resourceType", "Other")
+                    
+                    if resource_type in all_resources:
+                        all_resources[resource_type].append(resource)
+                    else:
+                        all_resources["Other"].append(resource)
+            
+            # Check for next page
+            next_url = None
+            for link in bundle.get("link", []):
+                if link.get("relation") == "next":
+                    next_url = link.get("url")
+                    break
+        
+        # Count resources
+        resource_counts = {k: len(v) for k, v in all_resources.items() if v}
+        
+        return {
+            "patient_id": patient_id,
+            "resource_counts": resource_counts,
+            "resources": all_resources
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting patient FHIR data: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": f"Error getting patient FHIR data: {str(e)}"})
+
+
 @app.get("/patient/{patient_id}/pdf")
 async def get_patient_pdf(patient_id: str):
     """
@@ -3204,9 +3324,41 @@ async def get_patient_pdf(patient_id: str):
         # Generate PDF
         pdf_bytes = generate_patient_pdf(patient_info, patient_id)
         
-        # Return as downloadable PDF with standardized filename including years of data
-        years = patient_info.get("years_of_data", 0)
-        filename = f"synthetic-patient-report-ID-{patient_id}-{years}yrs.pdf"
+        # Get patient's cohort records_timespan (num_years) from cohort tags
+        records_timespan = None
+        try:
+            # Find groups that contain this patient
+            groups_url = f"{hapi_url}/Group?member=Patient/{patient_id}"
+            r = requests.get(groups_url, timeout=10)
+            if r.status_code == 200:
+                groups_bundle = r.json()
+                for entry in groups_bundle.get("entry", []):
+                    group = entry.get("resource", {})
+                    if "meta" in group and "tag" in group["meta"]:
+                        for tag in group["meta"]["tag"]:
+                            if tag.get("system") == "urn:charm:setting:records_timespan":
+                                records_timespan = tag.get("code")
+                                break
+                    if records_timespan:
+                        break
+        except Exception as e:
+            logger.warning(f"Could not fetch cohort records_timespan for patient {patient_id}: {e}")
+        
+        # Extract age as number from patient_info
+        age_str = patient_info.get("personal_info", {}).get("age", "")
+        age_num = ""
+        if age_str:
+            # Extract just the number from "XX years"
+            age_num = age_str.replace(" years", "").strip()
+        
+        # Build filename parts - no fallback, skip YearsOfData if not found in cohort
+        # Format: synthetic-patient-report-ID-$idnum-$ageYearsOld-$number_of_yearsYearsOfData
+        filename_parts = [f"synthetic-patient-report-ID-{patient_id}"]
+        if age_num:
+            filename_parts.append(f"{age_num}YearsOld")
+        if records_timespan:
+            filename_parts.append(f"{records_timespan}YearsOfData")
+        filename = "-".join(filename_parts) + ".pdf"
         
         return StreamingResponse(
             iter([pdf_bytes]),
@@ -3294,9 +3446,41 @@ async def get_random_patient_pdf():
         # Generate PDF
         pdf_bytes = generate_patient_pdf(patient_info, patient_id)
         
-        # Return as downloadable PDF with standardized filename including years of data
-        years = patient_info.get("years_of_data", 0)
-        filename = f"synthetic-patient-report-ID-{patient_id}-{years}yrs.pdf"
+        # Get patient's cohort records_timespan (num_years) from cohort tags
+        records_timespan = None
+        try:
+            # Find groups that contain this patient
+            groups_url = f"{hapi_url}/Group?member=Patient/{patient_id}"
+            r = requests.get(groups_url, timeout=10)
+            if r.status_code == 200:
+                groups_bundle = r.json()
+                for entry in groups_bundle.get("entry", []):
+                    group = entry.get("resource", {})
+                    if "meta" in group and "tag" in group["meta"]:
+                        for tag in group["meta"]["tag"]:
+                            if tag.get("system") == "urn:charm:setting:records_timespan":
+                                records_timespan = tag.get("code")
+                                break
+                    if records_timespan:
+                        break
+        except Exception as e:
+            logger.warning(f"Could not fetch cohort records_timespan for random patient {patient_id}: {e}")
+        
+        # Extract age as number from patient_info
+        age_str = patient_info.get("personal_info", {}).get("age", "")
+        age_num = ""
+        if age_str:
+            # Extract just the number from "XX years"
+            age_num = age_str.replace(" years", "").strip()
+        
+        # Build filename parts - no fallback, skip YearsOfData if not found in cohort
+        # Format: synthetic-patient-report-ID-$idnum-$ageYearsOld-$number_of_yearsYearsOfData
+        filename_parts = [f"synthetic-patient-report-ID-{patient_id}"]
+        if age_num:
+            filename_parts.append(f"{age_num}YearsOld")
+        if records_timespan:
+            filename_parts.append(f"{records_timespan}YearsOfData")
+        filename = "-".join(filename_parts) + ".pdf"
         
         return StreamingResponse(
             iter([pdf_bytes]),
