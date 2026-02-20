@@ -9,7 +9,7 @@ import json
 import glob
 import requests
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, List, Set
 import sys
 from pathlib import Path
@@ -917,6 +917,21 @@ def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
 
 
 class SyntheaRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "num_patients": 10,
+                "num_years": 1,
+                "cohort_id": "default",
+                "exporter": "fhir",
+                "min_age": 0,
+                "max_age": 140,
+                "gender": "both",
+                "use_population_sampling": True
+            }
+        }
+    )
+    
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
     cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
@@ -2624,7 +2639,7 @@ def generate_patient_pdf(patient_info: dict, patient_id: str) -> bytes:
     story.append(Paragraph("<i>Project: https://github.com/CHARM-BDF/CHARMTwinsights</i>", notice_style))
     story.append(Spacer(1, 4))
     story.append(Paragraph(f"<i>To regenerate this PDF: GET http://localhost:8003/patient/{patient_id}/pdf</i>", notice_style))
-    story.append(Paragraph(f"<i>To obtain the full FHIR data for this synthetic patient: GET http://localhost:8003/patient/{patient_id}/fhir (or use HAPI FHIR: /Patient/{patient_id}/$everything)</i>", notice_style))
+    story.append(Paragraph(f"<i>To obtain the full FHIR data for this synthetic patient via HAPI FHIR: GET /Patient/{patient_id}/$everything</i>", notice_style))
     story.append(Spacer(1, 12))
     
     # ===== SECTION 1: Personal Information =====
