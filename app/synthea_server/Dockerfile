@@ -53,7 +53,7 @@ COPY data ./data
 
 # Copy install dependencies first to leverage Docker cache
 COPY pyproject.toml poetry.lock ./
-RUN poetry lock && poetry install --no-interaction --no-ansi --only main --no-root
+RUN poetry install --no-interaction --no-ansi --only main --no-root
 
 # then copy the main package and install it
 COPY synthea-pyserver ./synthea-pyserver
