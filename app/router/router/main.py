@@ -5,6 +5,7 @@ import httpx
 
 # Import routers
 from .routers import synthea
+from .routers import timeseries
 from .routers import modeling
 from .routers import stat_server_py
 from .routers import ingestion
@@ -34,6 +35,7 @@ app.add_middleware(
 
 app.include_router(modeling.router)
 app.include_router(synthea.router)
+app.include_router(timeseries.router)
 app.include_router(stat_server_py.router)
 app.include_router(ingestion.router)
 
