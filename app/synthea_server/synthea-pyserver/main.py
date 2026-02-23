@@ -11,6 +11,14 @@ import requests
 import httpx
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, List, Set
+import sys
+from pathlib import Path
+# Add the current directory to path for local imports
+sys.path.insert(0, str(Path(__file__).parent))
+from timeseries import (
+    generate_synthetic_timeseries,
+    get_model_info as get_timeseries_model_info,
+)
 import re
 import logging
 import uuid
@@ -2335,6 +2343,233 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
             status_code=500,
             detail=f"Unexpected error: {str(e)}"
         )
+
+
+# =============================================================================
+# Synthetic Vitals Timeseries Endpoints (TimeAutoDiff)
+# =============================================================================
+
+class SinglePatientGenerateRequest(BaseModel):
+    """Request model for generating synthetic timeseries for a single patient."""
+    ethnicity: Optional[int] = Field(None, ge=0, le=3, description="0=White, 1=Black, 2=Asian, 3=Other")
+    gender: Optional[int] = Field(None, ge=0, le=1, description="0=Female, 1=Male")
+    age_group: Optional[int] = Field(None, ge=0, le=3, description="0=0-30, 1=30-50, 2=50-70, 3=70-100")
+    mortality_label: Optional[int] = Field(None, ge=0, le=1, description="0=Survived, 1=Died")
+
+
+@app.get("/synthetic-vitals-timeseries/model-information")
+def timeseries_model_information():
+    """Get detailed information about the TimeAutoDiff synthetic timeseries model."""
+    try:
+        return get_timeseries_model_info()
+    except Exception as e:
+        logger.error(f"Error getting timeseries model info: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/synthetic-vitals-timeseries/generate-raw-1-patient")
+def timeseries_generate_single_patient(req: SinglePatientGenerateRequest):
+    """
+    Generate synthetic ICU timeseries data for a single patient using TimeAutoDiff.
+    
+    ## Output Features (10 vital signs over 25 hourly timesteps)
+    
+    Based on MIMIC-III/IV ICU data definitions:
+    
+    | Feature | Full Name | Unit | Description |
+    |---------|-----------|------|-------------|
+    | fio2 | Fraction of Inspired Oxygen | % (0-100) | Oxygen concentration delivered to patient |
+    | map | Mean Arterial Pressure | mmHg | Average arterial pressure during cardiac cycle |
+    | dbp | Diastolic Blood Pressure | mmHg | Arterial pressure during heart relaxation |
+    | o2sat | Oxygen Saturation (SpO2) | % (0-100) | Peripheral oxygen saturation |
+    | hr | Heart Rate | bpm | Beats per minute |
+    | temp | Temperature | °C | Body temperature |
+    | resp | Respiratory Rate | breaths/min | Breathing rate |
+    | sbp | Systolic Blood Pressure | mmHg | Arterial pressure during heart contraction |
+    | ph | Blood pH | pH units | Arterial blood acidity/alkalinity (normal: 7.35-7.45) |
+    | lymph | Lymphocyte Count | % or K/uL | White blood cell differential |
+    
+    ## Conditioning Parameters
+    
+    Control the characteristics of the generated patient:
+    
+    **ethnicity** (integer 0-3):
+    - 0 = White
+    - 1 = Black/African American
+    - 2 = Asian
+    - 3 = Other/Unknown
+    
+    **gender** (integer 0-1):
+    - 0 = Female
+    - 1 = Male
+    
+    **age_group** (integer 0-3):
+    - 0 = 0-30 years
+    - 1 = 30-50 years
+    - 2 = 50-70 years
+    - 3 = 70-100 years
+    
+    **mortality_label** (integer 0-1):
+    - 0 = Survived ICU stay
+    - 1 = Died during ICU stay
+    
+    If conditioning values are not provided, random values are sampled.
+    """
+    try:
+        # Generate for single patient
+        result = generate_synthetic_timeseries(
+            n_samples=1,
+            ethnicity=[req.ethnicity] if req.ethnicity is not None else None,
+            gender=[req.gender] if req.gender is not None else None,
+            age_group=[req.age_group] if req.age_group is not None else None,
+            mortality_label=[req.mortality_label] if req.mortality_label is not None else None,
+        )
+        
+        # Restructure output as single patient JSON
+        feature_names = result.get('feature_names', [])
+        synthetic_data = result.get('synthetic_data', [[]])[0]  # Get first (only) patient
+        
+        # Build structured timeseries with feature names
+        timeseries = []
+        for timestep_idx, timestep_values in enumerate(synthetic_data):
+            timestep_data = {'timestep': timestep_idx}
+            for feat_idx, feat_name in enumerate(feature_names):
+                if feat_idx < len(timestep_values):
+                    timestep_data[feat_name] = timestep_values[feat_idx]
+            timeseries.append(timestep_data)
+        
+        return {
+            'patient': {
+                'ethnicity': result['conditioning']['ethnicity'][0],
+                'gender': result['conditioning']['gender'][0],
+                'age_group': result['conditioning']['age_group'][0],
+                'mortality_label': result['conditioning']['mortality_label'][0],
+            },
+            'timeseries': timeseries,
+            'metadata': {
+                'seq_len': result.get('seq_len', 25),
+                'n_features': result.get('n_features', 10),
+                'feature_names': feature_names,
+            }
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"TimeAutoDiff package not available: {e}"
+        )
+    except Exception as e:
+        logger.error(f"Error generating synthetic timeseries: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/synthetic-vitals-timeseries/generate-visualization-1-patient")
+def timeseries_visualize(
+    ethnicity: Optional[int] = None,
+    gender: Optional[int] = None,
+    age_group: Optional[int] = None,
+    mortality_label: Optional[int] = None,
+):
+    """
+    Generate and visualize synthetic ICU timeseries as an interactive HTML page.
+    
+    Returns an interactive Plotly visualization with 10 stacked subplots showing
+    all vital signs over 25 hourly timesteps. Hover over any point to see details.
+    
+    ## Conditioning Parameters (all optional, random if not specified)
+    
+    - **ethnicity**: 0=White, 1=Black, 2=Asian, 3=Other
+    - **gender**: 0=Female, 1=Male
+    - **age_group**: 0=0-30, 1=30-50, 2=50-70, 3=70-100
+    - **mortality_label**: 0=Survived, 1=Died
+    """
+    from fastapi.responses import HTMLResponse
+    from timeseries import generate_timeseries_visualization
+    
+    try:
+        html = generate_timeseries_visualization(
+            ethnicity=ethnicity,
+            gender=gender,
+            age_group=age_group,
+            mortality_label=mortality_label,
+        )
+        return HTMLResponse(content=html)
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Visualization dependencies not available: {e}"
+        )
+    except Exception as e:
+        logger.error(f"Error generating timeseries visualization: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/synthetic-vitals-timeseries/generate-raw-n-patients")
+def timeseries_generate_n_patients(n_patients: int = 10):
+    """
+    Generate synthetic ICU timeseries data for multiple patients with random conditioning.
+    
+    All conditioning features (ethnicity, gender, age_group, mortality_label) are 
+    randomly sampled for each patient.
+    
+    ## Parameters
+    
+    - **n_patients**: Number of synthetic patients to generate (default: 10)
+    
+    ## Output
+    
+    Returns an array of patient objects, each containing:
+    - Patient demographics (randomly assigned)
+    - 25-hour timeseries of 10 vital signs
+    """
+    from timeseries import generate_synthetic_timeseries
+    
+    try:
+        result = generate_synthetic_timeseries(n_samples=n_patients)
+        
+        feature_names = result.get('feature_names', [])
+        synthetic_data = result.get('synthetic_data', [])
+        conditioning = result.get('conditioning', {})
+        
+        patients = []
+        for patient_idx in range(n_patients):
+            patient_data = synthetic_data[patient_idx] if patient_idx < len(synthetic_data) else []
+            
+            timeseries = []
+            for timestep_idx, timestep_values in enumerate(patient_data):
+                timestep_data = {'timestep': timestep_idx}
+                for feat_idx, feat_name in enumerate(feature_names):
+                    if feat_idx < len(timestep_values):
+                        timestep_data[feat_name] = timestep_values[feat_idx]
+                timeseries.append(timestep_data)
+            
+            patients.append({
+                'patient_index': patient_idx,
+                'demographics': {
+                    'gender': conditioning['gender'][patient_idx] if patient_idx < len(conditioning.get('gender', [])) else None,
+                    'ethnicity': conditioning['ethnicity'][patient_idx] if patient_idx < len(conditioning.get('ethnicity', [])) else None,
+                    'age_group': conditioning['age_group'][patient_idx] if patient_idx < len(conditioning.get('age_group', [])) else None,
+                    'mortality_label': conditioning['mortality_label'][patient_idx] if patient_idx < len(conditioning.get('mortality_label', [])) else None,
+                },
+                'timeseries': timeseries,
+            })
+        
+        return {
+            'n_patients': n_patients,
+            'metadata': {
+                'seq_len': result.get('seq_len', 25),
+                'n_features': result.get('n_features', 10),
+                'feature_names': feature_names,
+            },
+            'patients': patients,
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"TimeAutoDiff package not available: {e}"
+        )
+    except Exception as e:
+        logger.error(f"Error generating synthetic timeseries batch: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
