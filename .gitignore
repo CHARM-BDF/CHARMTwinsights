@@ -32,3 +32,6 @@ app/atlas/vocabulary_files/
 app/timeseries_model/download_data.py
 app/timeseries_model/test_model_mock.py
 app/timeseries_model/test_model_real_data.py
+
+# TimeAutoDiff raw data (downloaded for testing, not needed for inference)
+app/synthea_server/timeseries-generative-model/timeautodiff/raw_data/

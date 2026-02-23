@@ -52,11 +52,12 @@ COPY modules ./modules
 COPY data ./data
 
 # Copy install dependencies first to leverage Docker cache
-COPY pyproject.toml ./
-RUN poetry install --no-interaction --no-ansi --only main --no-root
+COPY pyproject.toml poetry.lock ./
+RUN poetry lock && poetry install --no-interaction --no-ansi --only main --no-root
 
 # then copy the main package and install it
 COPY synthea-pyserver ./synthea-pyserver
+COPY timeseries-generative-model ./timeseries-generative-model
 COPY README.md ./
 RUN poetry install --no-interaction --no-ansi
 
