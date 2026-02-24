@@ -655,6 +655,39 @@ def fetch_all_patients(hapi_url):
         return []
 
 
+def fetch_patients_by_ids(hapi_url, patient_ids: List[str]):
+    """Fetches specific FHIR Patient resources by ID."""
+    patients = []
+    for patient_id in patient_ids:
+        try:
+            url = f"{hapi_url.rstrip('/')}/Patient/{patient_id}"
+            response = requests.get(url)
+            if response.status_code == 200:
+                patients.append(response.json())
+        except Exception as e:
+            print(f"Error fetching patient {patient_id}: {e}")
+    return patients
+
+
+def fetch_patients_by_cohort_tag(hapi_url, cohort_id: str, limit: int, offset: int):
+    """Fetches paged Patient resources filtered by cohort tag."""
+    try:
+        cohort_tag = requests.utils.quote(f"urn:charm:cohort|{cohort_id}", safe="")
+        url = f"{hapi_url.rstrip('/')}/Patient?_tag={cohort_tag}&_count={limit}&_offset={offset}&_total=accurate"
+        response = requests.get(url)
+        if response.status_code != 200:
+            print(f"Error fetching cohort patients: HTTP {response.status_code}")
+            return [], 0
+
+        bundle = response.json()
+        patients = [entry["resource"] for entry in bundle.get("entry", []) if "resource" in entry]
+        total = int(bundle.get("total", len(patients)))
+        return patients, total
+    except Exception as e:
+        print(f"Error fetching cohort patients for {cohort_id}: {e}")
+        return [], 0
+
+
 def merge_group_members(existing_group, new_patient_ids):
     """
     Merges new patient IDs into an existing Group resource's member list.
@@ -1155,7 +1188,11 @@ async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_i
 
 
 @app.get("/list-all-patients", response_class=JSONResponse)
-async def list_all_patients():
+async def list_all_patients(
+    cohort_id: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+):
     """ Lists all patients stored in the HAPI FHIR server with specific demographic information.
     Returns:
         A JSON object containing a list of patients with their IDs, gender, ethnicity, date of birth, and cohort IDs
@@ -1179,64 +1216,67 @@ async def list_all_patients():
         )
     
     try:
-        # Fetch all groups/cohorts
-        print("Fetching groups from HAPI server...")
-        groups = fetch_all_groups(hapi_url)
-        print(f"Found {len(groups)} groups/cohorts")
-        
-        # Create a mapping of patient IDs to cohorts
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+
         patient_to_cohorts = {}
-        cohort_info = []
-        
-        # Process each group/cohort
-        for group in groups:
-            try:
-                cohort_id = group.get("id")
+        matching_patients = []
+        total_matching = 0
+
+        if cohort_id:
+            group = fetch_group_by_id(hapi_url, cohort_id)
+            cohort_name = cohort_id
+            if group and isinstance(group, dict):
                 cohort_name = group.get("name", cohort_id)
-                
-                # Get tags if available
-                tags = {}
-                if "meta" in group and "tag" in group["meta"]:
-                    for tag in group["meta"]["tag"]:
-                        if "system" in tag and "code" in tag:
-                            tags[tag["system"]] = tag["code"]
-                
-                # Get members
-                members = []
-                if "member" in group:
-                    for member in group["member"]:
+
+            matching_patients, total_matching = fetch_patients_by_cohort_tag(
+                hapi_url=hapi_url,
+                cohort_id=cohort_id,
+                limit=limit,
+                offset=offset,
+            )
+
+            for patient in matching_patients:
+                patient_id = patient.get("id")
+                if patient_id:
+                    patient_to_cohorts[str(patient_id)] = [
+                        {
+                            "cohort_id": cohort_id,
+                            "cohort_name": cohort_name,
+                        }
+                    ]
+        else:
+            print("Fetching groups from HAPI server...")
+            groups = fetch_all_groups(hapi_url)
+            print(f"Found {len(groups)} groups/cohorts")
+
+            for group in groups:
+                try:
+                    group_id = group.get("id")
+                    group_name = group.get("name", group_id)
+                    for member in group.get("member", []):
                         if "entity" in member and "reference" in member["entity"]:
                             patient_ref = member["entity"]["reference"]
                             if patient_ref.startswith("Patient/"):
-                                patient_id = patient_ref[8:]  # Remove "Patient/" prefix
-                                members.append(patient_id)
-                                
-                                # Add this cohort to the patient's list of cohorts
+                                patient_id = patient_ref[8:]
                                 if patient_id not in patient_to_cohorts:
                                     patient_to_cohorts[patient_id] = []
                                 patient_to_cohorts[patient_id].append({
-                                    "cohort_id": cohort_id,
-                                    "cohort_name": cohort_name
+                                    "cohort_id": group_id,
+                                    "cohort_name": group_name
                                 })
-                
-                # Add cohort info to the list
-                cohort_info.append({
-                    "cohort_id": cohort_id,
-                    "name": cohort_name,
-                    "member_count": len(members),
-                    "tags": tags
-                })
-            except Exception as e:
-                print(f"Error processing group {group.get('id', 'unknown')}: {str(e)}")
-        
-        # Fetch all patients to ensure we include those not in any cohort
-        print("Fetching patients from HAPI server...")
-        patients = fetch_all_patients(hapi_url)
-        print(f"Found {len(patients)} patients")
+                except Exception as e:
+                    print(f"Error processing group {group.get('id', 'unknown')}: {str(e)}")
+
+            print("Fetching patients from HAPI server...")
+            patients = fetch_all_patients(hapi_url)
+            print(f"Found {len(patients)} patients")
+            total_matching = len(patients)
+            matching_patients = patients[offset:offset + limit]
         
         # Create the final patient list
         patient_list = []
-        for patient in patients:
+        for patient in matching_patients:
             try:
                 patient_id = patient.get("id")
                 if not patient_id:
@@ -1253,12 +1293,31 @@ async def list_all_patients():
                 if "meta" in patient and "tag" in patient["meta"]:
                     for tag in patient["meta"]["tag"]:
                         if tag.get("system") == "urn:charm:cohort":
-                            cohort_id = tag.get("code")
-                            if cohort_id not in cohort_ids:
-                                cohort_ids.append(cohort_id)
+                            tag_cohort_id = tag.get("code")
+                            if tag_cohort_id not in cohort_ids:
+                                cohort_ids.append(tag_cohort_id)
                 
                 # Get gender if available
                 gender = patient.get("gender", "unknown")
+
+                # Extract a human-readable name from standard FHIR Patient.name fields
+                given_name = ""
+                family_name = ""
+                if isinstance(patient.get("name"), list) and patient["name"]:
+                    primary_name = patient["name"][0] if isinstance(patient["name"][0], dict) else {}
+                    given_values = primary_name.get("given", [])
+                    if isinstance(given_values, list):
+                        given_name = " ".join(str(value) for value in given_values if value).strip()
+                    family_name = str(primary_name.get("family", "")).strip()
+                    if not given_name and not family_name:
+                        full_text = str(primary_name.get("text", "")).strip()
+                        if full_text:
+                            parts = full_text.split()
+                            if len(parts) == 1:
+                                given_name = parts[0]
+                            elif len(parts) > 1:
+                                given_name = " ".join(parts[:-1])
+                                family_name = parts[-1]
                 
                 # Extract ethnicity from extensions
                 ethnicity = "unknown"
@@ -1281,6 +1340,8 @@ async def list_all_patients():
                 # Add to patient list with only the requested fields
                 patient_info = {
                     "id": patient_id,
+                    "given_name": given_name,
+                    "family_name": family_name,
                     "gender": gender,
                     "ethnicity": ethnicity,
                     "birth_date": birth_date,
@@ -1293,7 +1354,9 @@ async def list_all_patients():
         
         return {
             "patients": patient_list,
-            "total_patients": len(patient_list)
+            "total_patients": total_matching,
+            "limit": limit,
+            "offset": offset,
         }
     except Exception as e:
         error_msg = f"Error processing patients and cohorts: {str(e)}"
@@ -2256,4 +2319,3 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

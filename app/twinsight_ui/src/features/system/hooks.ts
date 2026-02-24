@@ -45,8 +45,8 @@ function buildTargets(mode: ServiceMode): ConnectionTarget[] {
 
   return [
     {
-      id: 'direct-synthea-health',
-      label: 'Synthea Service',
+      id: 'direct-router-health',
+      label: 'Router API',
       endpoint: join(registry.cohortsBaseUrl, '/health'),
       kind: 'health',
     },
@@ -57,10 +57,10 @@ function buildTargets(mode: ServiceMode): ConnectionTarget[] {
       kind: 'read',
     },
     {
-      id: 'direct-model-health',
-      label: 'Model Service',
-      endpoint: join(registry.modelsBaseUrl, '/health'),
-      kind: 'health',
+      id: 'direct-patient-feed',
+      label: 'Patient Feed',
+      endpoint: join(registry.patientsBaseUrl, endpointPathMap.listPatientsByCohort.direct),
+      kind: 'read',
     },
     {
       id: 'direct-model-feed',
@@ -86,6 +86,9 @@ function describeReadPayload(payload: unknown): string {
   }
   if (Array.isArray(data.models)) {
     return `${data.models.length} models`;
+  }
+  if (Array.isArray(data.patients)) {
+    return `${data.patients.length} patients`;
   }
 
   return 'reachable';

@@ -23,14 +23,48 @@
   font-size: var(--font-size-lg);
 }
 
-.layout {
-  display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(320px, 420px);
-  gap: var(--space-5);
+.tableColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-@media (max-width: 1100px) {
-  .layout {
-    grid-template-columns: 1fr;
+.paginationRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.paginationRow p {
+  margin: 0;
+}
+
+.paginationControls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.paginationControls button {
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: white;
+  color: var(--color-text-primary);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.paginationControls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@media (max-width: 700px) {
+  .paginationRow {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

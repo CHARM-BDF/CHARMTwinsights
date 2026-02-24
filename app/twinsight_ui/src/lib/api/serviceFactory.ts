@@ -82,13 +82,35 @@ function buildPatientService(mode: ServiceMode): PatientService {
   const registry = getEndpointRegistry(mode);
 
   return {
-    async listPatientsByCohort(cohortId) {
+    async listPatientsByCohort(cohortId, options) {
       const path = pathFor(mode, 'listPatientsByCohort', cohortId);
-      const requestPath =
-        mode === 'direct' ? `${path}?cohort_id=${encodeURIComponent(cohortId)}` : path;
-      const response = await fetchJson<Record<string, unknown>>(join(registry.patientsBaseUrl, requestPath));
+      const limit = Math.max(1, Math.min(200, Number(options?.limit ?? 20)));
+      const offset = Math.max(0, Number(options?.offset ?? 0));
+
+      if (mode === 'direct') {
+        const requestPath = `${path}?cohort_id=${encodeURIComponent(cohortId)}&limit=${limit}&offset=${offset}`;
+        const response = await fetchJson<Record<string, unknown>>(join(registry.patientsBaseUrl, requestPath));
+        const rows = (response.patients as Record<string, unknown>[]) ?? (response.data as Record<string, unknown>[]) ?? [];
+        const total = Number(response.total_patients ?? response.total ?? rows.length);
+        return {
+          rows: rows.map(mapPatientSummary),
+          total,
+          limit,
+          offset,
+        };
+      }
+
+      const response = await fetchJson<Record<string, unknown>>(join(registry.patientsBaseUrl, path));
       const rows = (response.patients as Record<string, unknown>[]) ?? (response.data as Record<string, unknown>[]) ?? [];
-      return rows.map(mapPatientSummary);
+      const total = rows.length;
+      const paged = rows.slice(offset, offset + limit);
+
+      return {
+        rows: paged.map(mapPatientSummary),
+        total,
+        limit,
+        offset,
+      };
     },
     async getPatientRecord(patientId) {
       const response = await fetchJson<Record<string, unknown>>(

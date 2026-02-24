@@ -32,8 +32,8 @@ export function mapGenerationJob(input: Record<string, unknown>): GenerationJob 
 export function mapPatientSummary(input: Record<string, unknown>): PatientSummary {
   return {
     patientId: String(input.patientId ?? input.patient_id ?? input.id ?? 'unknown'),
-    givenName: String(input.givenName ?? input.given_name ?? 'Unknown'),
-    familyName: String(input.familyName ?? input.family_name ?? 'Unknown'),
+    givenName: String(input.givenName ?? input.given_name ?? input.given ?? input.first_name ?? ''),
+    familyName: String(input.familyName ?? input.family_name ?? input.family ?? input.last_name ?? ''),
     gender: String(input.gender ?? 'unknown'),
     birthDate: String(input.birthDate ?? input.birth_date ?? 'unknown'),
     cohortId: String(input.cohortId ?? input.cohort_id ?? 'unknown'),

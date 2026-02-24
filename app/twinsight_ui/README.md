@@ -54,10 +54,9 @@ Environment variables:
 
 - `VITE_SERVICE_MODE` (`mock` by default)
 - `VITE_UI_PRIMARY` (`false` by default)
-- `VITE_SYNTHEA_BASE` (default `http://localhost:8003`)
-- `VITE_STAT_BASE` (default `http://localhost:8001`)
-- `VITE_MODEL_BASE` (default `http://localhost:8004`)
-- `VITE_MCP_BASE` (default `http://localhost:8006`)
+- `VITE_ROUTER_BASE` (default `http://localhost:8000`)
+
+In `direct` mode, service reads are routed through the API gateway (`router`) using `VITE_ROUTER_BASE`.
 
 If the MSW worker script is missing, the app uses a temporary fetch fallback for mock mode. Generate the full worker script with `npm run mock:worker` for normal browser interception.
 

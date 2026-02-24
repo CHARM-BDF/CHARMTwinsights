@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Body
+from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Body, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -54,14 +54,14 @@ async def get_module_content(module_name: str):
 
 
 @router.get("/list-all-patients", response_class=JSONResponse)
-async def list_all_patients():
+async def list_all_patients(request: Request):
     """
     Get a list of all patients with their cohort IDs, date of birth, and display/text fields from the HAPI FHIR server.
     """
     url = f"{settings.synthea_server_url}/list-all-patients"
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, params=request.query_params)
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPStatusError as e:
@@ -343,4 +343,3 @@ async def get_cities_for_state(state: str):
     except httpx.RequestError as e:
         logger.error(f"Error contacting Synthea backend (cities): {e}")
         raise HTTPException(status_code=500, detail="Synthea server unreachable")
-

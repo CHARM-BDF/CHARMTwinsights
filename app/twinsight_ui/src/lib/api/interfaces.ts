@@ -6,8 +6,8 @@ import type {
   ModelDescriptor,
   ModelRunRecord,
   ModelRunRequest,
+  PatientPage,
   PatientRecord,
-  PatientSummary,
 } from '../contracts/types';
 import type { CohortGenerationIntent } from '../contracts/schemas';
 
@@ -19,7 +19,10 @@ export type CohortService = {
 };
 
 export type PatientService = {
-  listPatientsByCohort: (cohortId: string) => Promise<PatientSummary[]>;
+  listPatientsByCohort: (
+    cohortId: string,
+    options?: { limit?: number; offset?: number },
+  ) => Promise<PatientPage>;
   getPatientRecord: (patientId: string) => Promise<PatientRecord | null>;
 };
 

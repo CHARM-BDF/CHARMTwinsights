@@ -1,4 +1,4 @@
-import { mapCohortSummary, mapModelDescriptor, mapRunRecord } from './dtoMappers';
+import { mapCohortSummary, mapModelDescriptor, mapPatientSummary, mapRunRecord } from './dtoMappers';
 
 describe('dtoMappers', () => {
   it('maps cohort summary from snake_case payloads', () => {
@@ -18,5 +18,13 @@ describe('dtoMappers', () => {
     expect(result.runId).toBe('run-1');
     expect(result.imageTag).toBe('model:latest');
     expect(result.status).toBe('queued');
+  });
+
+  it('maps patients without forcing Unknown name placeholders', () => {
+    const result = mapPatientSummary({ id: 'patient-1', birth_date: '2000-01-01' });
+    expect(result.patientId).toBe('patient-1');
+    expect(result.givenName).toBe('');
+    expect(result.familyName).toBe('');
+    expect(result.birthDate).toBe('2000-01-01');
   });
 });

@@ -34,6 +34,13 @@ export type PatientRecord = PatientSummary & {
   lastEncounterDate: string;
 };
 
+export type PatientPage = {
+  rows: PatientSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type ModelSchemaField = {
   name: string;
   range: string;

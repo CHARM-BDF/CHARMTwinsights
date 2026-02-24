@@ -29,11 +29,13 @@ services:
       args:
         VITE_UI_PRIMARY: ${VITE_UI_PRIMARY:-false}
         VITE_SERVICE_MODE: ${VITE_SERVICE_MODE:-mock}
+        VITE_ROUTER_BASE: ${VITE_ROUTER_BASE:-http://localhost:8000}
     ports:
       - "8010:80"
     environment:
       - VITE_UI_PRIMARY=${VITE_UI_PRIMARY:-false}
       - VITE_SERVICE_MODE=${VITE_SERVICE_MODE:-mock}
+      - VITE_ROUTER_BASE=${VITE_ROUTER_BASE:-http://localhost:8000}
 
   router:
     build: ./router

@@ -1,6 +1,5 @@
-import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { ActivityTimeline } from '../components/ActivityTimeline';
 import { DataTable } from '../components/DataTable';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorBanner } from '../components/ErrorBanner';
@@ -11,34 +10,38 @@ import { useCohortById } from '../features/cohorts/hooks';
 import { usePatientsByCohort } from '../features/patients/hooks';
 import styles from './CohortDetailPage.module.css';
 
+const PAGE_SIZE = 20;
+
 export function CohortDetailPage() {
   const { cohortId = '' } = useParams();
+  const [currentPage, setCurrentPage] = useState(1);
   const cohortQuery = useCohortById(cohortId);
-  const patientsQuery = usePatientsByCohort(cohortId);
+  const shouldLoadPatients = cohortQuery.isSuccess && Boolean(cohortQuery.data);
+  const patientsQuery = usePatientsByCohort(cohortId, { enabled: shouldLoadPatients, page: currentPage, pageSize: PAGE_SIZE });
+  const totalPatients = patientsQuery.data?.total ?? 0;
+  const displayedPatientCount = patientsQuery.data?.total ?? cohortQuery.data?.patientCount ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalPatients / PAGE_SIZE));
+  const boundedPage = Math.max(1, Math.min(currentPage, totalPages));
+  const pagedPatients = patientsQuery.data?.rows ?? [];
+  const sliceStart = (boundedPage - 1) * PAGE_SIZE;
+  const pageStartNumber = totalPatients === 0 ? 0 : sliceStart + 1;
+  const pageEndNumber = Math.min(sliceStart + PAGE_SIZE, totalPatients);
 
-  const timelineItems = useMemo(
-    () => [
-      {
-        id: 'activity-1',
-        title: 'Cohort created',
-        timestamp: cohortQuery.data?.createdAt ?? new Date().toISOString(),
-        detail: 'Cohort metadata registered with source and initial patient count.',
-      },
-      {
-        id: 'activity-2',
-        title: 'Patient table synchronized',
-        timestamp: new Date().toISOString(),
-        detail: 'Structured patient summaries refreshed for current cohort context.',
-      },
-    ],
-    [cohortQuery.data?.createdAt],
-  );
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [cohortId]);
 
-  if (cohortQuery.isLoading || patientsQuery.isLoading) {
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  if (cohortQuery.isLoading || (shouldLoadPatients && patientsQuery.isLoading)) {
     return <LoadingSkeleton lines={6} />;
   }
 
-  if (cohortQuery.isError || patientsQuery.isError) {
+  if (cohortQuery.isError) {
     return <ErrorBanner message="Unable to load cohort details." />;
   }
 
@@ -55,7 +58,7 @@ export function CohortDetailPage() {
     <>
       <PageHeader
         title={`Cohort Detail: ${cohortQuery.data.cohortId}`}
-        description="Review cohort metadata, patient summaries, and recent workflow events."
+        description="Review cohort metadata and patient summaries."
       />
 
       <section className={styles.summaryRow} aria-label="Cohort summary">
@@ -65,7 +68,7 @@ export function CohortDetailPage() {
         </div>
         <div>
           <h2>Patient Count</h2>
-          <p>{cohortQuery.data.patientCount}</p>
+          <p>{displayedPatientCount}</p>
         </div>
         <div>
           <h2>Status</h2>
@@ -73,10 +76,14 @@ export function CohortDetailPage() {
         </div>
       </section>
 
-      <div className={styles.layout}>
+      {patientsQuery.isError ? (
+        <ErrorBanner message="Unable to load patient summaries for this cohort. Cohort metadata is still available." />
+      ) : null}
+
+      <div className={styles.tableColumn}>
         <DataTable
           caption="Patients"
-          rows={patientsQuery.data ?? []}
+          rows={pagedPatients}
           rowKey={(row) => row.patientId}
           columns={[
             {
@@ -87,7 +94,12 @@ export function CohortDetailPage() {
             {
               key: 'name',
               header: 'Name',
-              render: (row) => `${row.givenName} ${row.familyName}`,
+              render: (row) => {
+                const given = row.givenName.trim();
+                const family = row.familyName.trim();
+                const fullName = `${given} ${family}`.trim();
+                return fullName.length > 0 ? fullName : `Patient ${row.patientId}`;
+              },
             },
             {
               key: 'gender',
@@ -102,7 +114,27 @@ export function CohortDetailPage() {
           ]}
         />
 
-        <ActivityTimeline items={timelineItems} />
+        <div className={styles.paginationRow} aria-label="Patient table pagination">
+          <p>
+            Showing {pageStartNumber}-{pageEndNumber} of {totalPatients} patients
+          </p>
+
+          <div className={styles.paginationControls}>
+            <button type="button" onClick={() => setCurrentPage((value) => Math.max(1, value - 1))} disabled={boundedPage <= 1}>
+              Previous
+            </button>
+            <span>
+              Page {boundedPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((value) => Math.min(totalPages, value + 1))}
+              disabled={boundedPage >= totalPages}
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
     </>
   );

@@ -13,10 +13,7 @@ function trimSlash(input: string) {
   return input.endsWith('/') ? input.slice(0, -1) : input;
 }
 
-const syntheaBase = trimSlash(import.meta.env.VITE_SYNTHEA_BASE ?? 'http://localhost:8003');
-const statBase = trimSlash(import.meta.env.VITE_STAT_BASE ?? 'http://localhost:8001');
-const modelBase = trimSlash(import.meta.env.VITE_MODEL_BASE ?? 'http://localhost:8004');
-const mcpBase = trimSlash(import.meta.env.VITE_MCP_BASE ?? 'http://localhost:8006');
+const routerBase = trimSlash(import.meta.env.VITE_ROUTER_BASE ?? 'http://localhost:8000');
 
 export function isServiceMode(value: unknown): value is ServiceMode {
   return value === 'mock' || value === 'direct';
@@ -34,34 +31,34 @@ export function getEndpointRegistry(mode: ServiceMode): EndpointRegistry {
   }
 
   return {
-    cohortsBaseUrl: syntheaBase,
-    patientsBaseUrl: statBase,
-    modelsBaseUrl: modelBase,
-    runsBaseUrl: modelBase,
-    copilotBaseUrl: mcpBase,
+    cohortsBaseUrl: routerBase,
+    patientsBaseUrl: routerBase,
+    modelsBaseUrl: routerBase,
+    runsBaseUrl: routerBase,
+    copilotBaseUrl: routerBase,
   };
 }
 
 export const endpointPathMap = {
   listCohorts: {
     mock: '/cohorts',
-    direct: '/list-all-cohorts',
+    direct: '/synthetic/synthea/list-all-cohorts',
   },
   listGenerationJobs: {
     mock: '/generation-jobs',
-    direct: '/synthetic-patients/jobs',
+    direct: '/synthetic/synthea/synthetic-patients/jobs',
   },
   createGenerationIntent: {
     mock: '/generation-jobs',
-    direct: '/synthetic-patients',
+    direct: '/synthetic/synthea/synthetic-patients',
   },
   listPatientsByCohort: {
     mock: '/cohorts/:cohortId/patients',
-    direct: '/patients',
+    direct: '/synthetic/synthea/list-all-patients',
   },
   listModels: {
     mock: '/models',
-    direct: '/models',
+    direct: '/modeling/models',
   },
   listRuns: {
     mock: '/runs',
