@@ -752,12 +752,13 @@ def merge_group_members(existing_group, new_patient_ids):
 
 
 
-def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (success (bool), message (str), patient_ids (set of str) or None)
+def post_bundle(json_file, hapi_url, tags: dict[str, str] = None, generation_settings: dict = None): # returns (success (bool), message (str), patient_ids (set of str) or None)
     """ Posts a FHIR Bundle or resource to the HAPI FHIR server. Returned patient_ids is a set of patient IDs found in the bundle, useful for cohort management.
     Args:
         json_file: Path to the JSON file containing the FHIR Bundle or resource.
         hapi_url: Base URL of the HAPI FHIR server (e.g., http://hapi:8080/fhir).
         tags: Optional dictionary of tags to apply to the resource or bundle.
+        generation_settings: Optional dict with generation settings to tag Patient resources with.
     Returns:
         A tuple (success, message, patient_ids) where:
         - success (bool): True if the post was successful, False otherwise.
@@ -768,13 +769,36 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
     with open(json_file, "r") as f:
         bundle = json.load(f)
 
-        # collect patient IDs
+        # collect patient IDs and add generation settings tags to Patient resources
         if bundle.get("resourceType") == "Bundle" and "entry" in bundle:
             for entry in bundle["entry"]:
                 if "resource" in entry and entry["resource"].get("resourceType") == "Patient":
                     patient_id = entry["resource"].get("id")
                     if patient_id:
                         patient_ids.add(patient_id)
+                    
+                    # Add generation settings tags to each Patient resource
+                    if generation_settings:
+                        patient_resource = entry["resource"]
+                        if "meta" not in patient_resource:
+                            patient_resource["meta"] = {}
+                        if "tag" not in patient_resource["meta"]:
+                            patient_resource["meta"]["tag"] = []
+                        
+                        # Add generation settings as tags on the Patient
+                        settings_tags = [
+                            {"system": "urn:charm:setting:records_timespan", "code": str(generation_settings.get("num_years", ""))},
+                            {"system": "urn:charm:setting:gender", "code": str(generation_settings.get("gender", ""))},
+                            {"system": "urn:charm:setting:min_age", "code": str(generation_settings.get("min_age", ""))},
+                            {"system": "urn:charm:setting:max_age", "code": str(generation_settings.get("max_age", ""))},
+                        ]
+                        # Only add state/city if they were specified
+                        if generation_settings.get("state"):
+                            settings_tags.append({"system": "urn:charm:setting:state", "code": str(generation_settings.get("state"))})
+                        if generation_settings.get("city"):
+                            settings_tags.append({"system": "urn:charm:setting:city", "code": str(generation_settings.get("city"))})
+                        
+                        patient_resource["meta"]["tag"].extend(settings_tags)
          
         if tags:
             apply_tags(bundle, tags)
@@ -851,16 +875,16 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
         return False, error_info, None
     
 
-def upsert_group(hapi_url, cohort_id, new_patient_ids, tags, generation_settings=None):
+def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
     """ Upserts a FHIR Group resource with the given cohort ID and patient IDs.
     If the Group already exists, it merges the new patient IDs with existing members.
-    If creating a new Group, adds a creation timestamp tag and generation settings.
+    If creating a new Group, adds a creation timestamp tag.
+    Note: Generation settings are now stored on Patient resources, not on the Group.
     Args:
         hapi_url: Base URL of the HAPI FHIR server (e.g., http://hapi:8080/fhir).
         cohort_id: The ID of the cohort to create or update.
         new_patient_ids: A set of new patient IDs to add to the Group.
         tags: Optional dictionary of tags to apply to the Group resource.
-        generation_settings: Optional dict with cohort generation settings (num_patients, num_years, gender, state, city, min_age, max_age).
     Returns:
         The response text from the HAPI FHIR server after the upsert operation.
     Raises:
@@ -912,23 +936,6 @@ def upsert_group(hapi_url, cohort_id, new_patient_ids, tags, generation_settings
             "code": current_time
         })
         logger.info(f"Adding creation timestamp {current_time} to new cohort {cohort_id}")
-        
-        # Add generation settings tags for new cohorts
-        if generation_settings:
-            settings_tags = [
-                {"system": "urn:charm:setting:num_patients", "code": str(generation_settings.get("num_patients", ""))},
-                {"system": "urn:charm:setting:records_timespan", "code": str(generation_settings.get("num_years", ""))},
-                {"system": "urn:charm:setting:gender", "code": str(generation_settings.get("gender", ""))},
-                {"system": "urn:charm:setting:min_age", "code": str(generation_settings.get("min_age", ""))},
-                {"system": "urn:charm:setting:max_age", "code": str(generation_settings.get("max_age", ""))},
-            ]
-            # Only add state/city if they were specified
-            if generation_settings.get("state"):
-                settings_tags.append({"system": "urn:charm:setting:state", "code": str(generation_settings.get("state"))})
-            if generation_settings.get("city"):
-                settings_tags.append({"system": "urn:charm:setting:city", "code": str(generation_settings.get("city"))})
-            group["meta"]["tag"].extend(settings_tags)
-            logger.info(f"Adding generation settings to cohort {cohort_id}")
     if tags:
         apply_tags(group, tags)
     r = requests.put(url, json=group, headers={"Content-Type": "application/fhir+json"})
@@ -954,7 +961,7 @@ class SyntheaRequest(BaseModel):
     
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
-    cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
+    cohort_id: str = Field("default", description="Cohort identifier. Use 'default' for auto-generated name (Cohort-No-X), or specify a custom FHIR-valid ID")
     exporter: str = Field("fhir", description="Export format: 'fhir' or 'csv'")
     min_age: int = Field(0, ge=0, le=140, description="Minimum patient age")
     max_age: int = Field(140, ge=0, le=140, description="Maximum patient age")
@@ -974,18 +981,14 @@ class SyntheaRequest(BaseModel):
     @field_validator('cohort_id')
     @classmethod
     def validate_cohort_id(cls, v: str) -> str:
-        """Validate and generate cohort_id if not specified.
+        """Validate cohort_id format. 
         
-        If cohort_id is 'default' or empty, generates a unique ID in the format:
-        Cohort-DayName-Date-Timestamp (e.g., Cohort-Monday-20260218-072436)
+        If cohort_id is 'default' or empty, it will be replaced with a unique
+        Cohort-No-X name in create_generation_job after checking existing cohorts.
         """
-        # Generate dynamic ID if user didn't specify one
+        # Mark for auto-generation - actual name will be set in create_generation_job
         if v == "default" or v == "" or v == "string":
-            now = datetime.now()
-            day_name = now.strftime("%A")  # e.g., "Monday"
-            date_str = now.strftime("%Y%m%d")  # e.g., "20260218"
-            time_str = now.strftime("%H%M%S")  # e.g., "072436"
-            v = f"Cohort-{day_name}-{date_str}-{time_str}"
+            return "auto"
         
         # FHIR resource ID pattern: [A-Za-z0-9\-\.]{1,64}
         fhir_id_pattern = r'^[A-Za-z0-9\-\.]{1,64}$'
@@ -997,6 +1000,40 @@ class SyntheaRequest(BaseModel):
                 f"and be 1-64 characters long. Underscores are not allowed."
             )
         return v
+
+
+def generate_unique_cohort_name(hapi_url: str) -> str:
+    """Generate a unique cohort name in format Cohort-No-X.
+    
+    Checks existing cohorts in HAPI and finds the next available number.
+    """
+    try:
+        # Fetch all existing groups to find existing Cohort-No-X names
+        existing_numbers = set()
+        url = f"{hapi_url}/Group?_count=1000"
+        r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=10)
+        
+        if r.status_code == 200:
+            bundle = r.json()
+            for entry in bundle.get("entry", []):
+                group = entry.get("resource", {})
+                group_id = group.get("id", "")
+                # Check if it matches Cohort-No-X pattern
+                match = re.match(r'^Cohort-No-(\d+)$', group_id)
+                if match:
+                    existing_numbers.add(int(match.group(1)))
+        
+        # Find the next available number
+        next_num = 1
+        while next_num in existing_numbers:
+            next_num += 1
+        
+        return f"Cohort-No-{next_num}"
+    except Exception as e:
+        logger.warning(f"Error checking existing cohorts: {e}, falling back to timestamp-based name")
+        # Fallback to timestamp-based name if HAPI is not available
+        now = datetime.now()
+        return f"Cohort-{now.strftime('%Y%m%d-%H%M%S')}"
 
 @app.post("/synthetic-patients")
 async def create_generation_job(request: SyntheaRequest):
@@ -1019,9 +1056,16 @@ async def create_generation_job(request: SyntheaRequest):
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
     
+    # Generate unique cohort name if auto-generation was requested
+    hapi_url = os.environ.get('HAPI_URL', 'http://hapi:8080/fhir')
+    request_data = request.model_dump()
+    if request_data["cohort_id"] == "auto":
+        request_data["cohort_id"] = generate_unique_cohort_name(hapi_url)
+        logger.info(f"Auto-generated cohort name: {request_data['cohort_id']}")
+    
     # Create job
     job_id = str(uuid.uuid4())
-    job = JobStatus(job_id, request.model_dump())
+    job = JobStatus(job_id, request_data)
     with jobs_lock:
         jobs[job_id] = job
     
@@ -1194,14 +1238,7 @@ async def process_generation_job(job_id: str):
             
             job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Uploading to HAPI"
             
-            # Upload chunk
-            chunk_patient_ids = await upload_chunk_to_hapi(
-                output_dir, hapi_url, tagset, job_id, chunk["chunk_id"]
-            )
-            all_patient_ids.update(chunk_patient_ids)
-            
-            # Update cohort with current patient set after each chunk
-            job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Updating cohort"
+            # Build generation_settings for Patient-level tagging
             generation_settings = {
                 "num_patients": request_data["num_patients"],
                 "num_years": request_data["num_years"],
@@ -1211,8 +1248,17 @@ async def process_generation_job(job_id: str):
                 "state": request_data.get("state"),
                 "city": request_data.get("city")
             }
+            
+            # Upload chunk with generation_settings for Patient tagging
+            chunk_patient_ids = await upload_chunk_to_hapi(
+                output_dir, hapi_url, tagset, job_id, chunk["chunk_id"], generation_settings
+            )
+            all_patient_ids.update(chunk_patient_ids)
+            
+            # Update cohort with current patient set after each chunk (no generation_settings - they're on patients now)
+            job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Updating cohort"
             try:
-                upsert_group(hapi_url, request_data["cohort_id"], all_patient_ids, tagset, generation_settings)
+                upsert_group(hapi_url, request_data["cohort_id"], all_patient_ids, tagset)
                 logger.info(f"Job {job_id}: Updated cohort with {len(all_patient_ids)} patients after chunk {chunk['chunk_id']}")
             except Exception as e:
                 logger.error(f"Job {job_id}: Failed to update cohort after chunk {chunk['chunk_id']}: {str(e)}")
@@ -1251,7 +1297,7 @@ async def process_generation_job(job_id: str):
         job.current_phase = "failed"
         logger.error(f"Job {job_id} failed: {str(e)}", exc_info=True)
 
-async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_id: str, chunk_id: int) -> Set[str]:
+async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_id: str, chunk_id: int, generation_settings: dict = None) -> Set[str]:
     """Upload a chunk's generated files to HAPI server"""
     # Get all JSON files
     special_files = sorted(glob.glob(os.path.join(output_dir, "practitionerInformation*.json"))) + \
@@ -1261,7 +1307,7 @@ async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_i
     
     patient_ids = set()
     
-    # Upload special files first (if any)
+    # Upload special files first (if any) - no generation_settings for these
     for json_file in special_files:
         try:
             success, error_info, _ = post_bundle(json_file, hapi_url, tags=tags)
@@ -1270,14 +1316,14 @@ async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_i
         except Exception as e:
             logger.warning(f"Job {job_id} chunk {chunk_id}: Error uploading {os.path.basename(json_file)}: {str(e)}")
     
-    # Upload patient files with retry logic
+    # Upload patient files with retry logic - include generation_settings for Patient tagging
     max_retries = 3
     retry_delay = 2
     
     for json_file in patient_files:
         for retry in range(max_retries):
             try:
-                success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tags)
+                success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tags, generation_settings=generation_settings)
                 if success and new_patient_ids:
                     patient_ids.update(new_patient_ids)
                     break  # Success
@@ -1668,11 +1714,11 @@ async def list_all_cohorts():
     # Process the groups to extract cohort information
     cohorts = []
     for group in all_groups:
-        # Extract cohort ID, source, creation time, and generation settings from tags
+        # Extract cohort ID, source, and creation time from tags
+        # Note: generation_settings are now stored on Patient resources, not on Groups
         cohort_id = None
         source = None
         creation_time = None
-        generation_settings = {}
         
         group_id = group.get("id")
         
@@ -1687,21 +1733,6 @@ async def list_all_cohorts():
                     source = code
                 elif system == "urn:charm:created":
                     creation_time = code
-                # Extract generation settings
-                elif system == "urn:charm:setting:num_patients":
-                    generation_settings["num_patients"] = int(code) if code else None
-                elif system == "urn:charm:setting:records_timespan":
-                    generation_settings["records_timespan"] = int(code) if code else None
-                elif system == "urn:charm:setting:gender":
-                    generation_settings["gender"] = code
-                elif system == "urn:charm:setting:min_age":
-                    generation_settings["min_age"] = int(code) if code else None
-                elif system == "urn:charm:setting:max_age":
-                    generation_settings["max_age"] = int(code) if code else None
-                elif system == "urn:charm:setting:state":
-                    generation_settings["state"] = code
-                elif system == "urn:charm:setting:city":
-                    generation_settings["city"] = code
                 # Also check for datatype tag to identify synthetic cohorts
                 elif system == "urn:charm:datatype" and code == "synthetic":
                     if not cohort_id and group_id:
@@ -1720,8 +1751,7 @@ async def list_all_cohorts():
             "cohort_id": cohort_id,
             "patient_count": patient_count,
             "source": source or "unknown",
-            "created_at": creation_time or "unknown",
-            "generation_settings": generation_settings if generation_settings else None
+            "created_at": creation_time or "unknown"
         }
             
         cohorts.append(cohort_info)
@@ -2288,25 +2318,20 @@ async def get_patient_pdf(patient_id: str):
         # Generate PDF
         pdf_bytes = generate_patient_pdf(patient_info, patient_id)
         
-        # Get patient's cohort records_timespan (num_years) from cohort tags
+        # Get patient's records_timespan (num_years) from Patient resource tags
         records_timespan = None
         try:
-            # Find groups that contain this patient
-            groups_url = f"{hapi_url}/Group?member=Patient/{patient_id}"
-            r = requests.get(groups_url, timeout=10)
-            if r.status_code == 200:
-                groups_bundle = r.json()
-                for entry in groups_bundle.get("entry", []):
-                    group = entry.get("resource", {})
-                    if "meta" in group and "tag" in group["meta"]:
-                        for tag in group["meta"]["tag"]:
-                            if tag.get("system") == "urn:charm:setting:records_timespan":
-                                records_timespan = tag.get("code")
-                                break
-                    if records_timespan:
-                        break
+            # Look for the Patient resource in all_resources and check its meta tags
+            for patient_resource in all_resources.get("Patient", []):
+                if "meta" in patient_resource and "tag" in patient_resource["meta"]:
+                    for tag in patient_resource["meta"]["tag"]:
+                        if tag.get("system") == "urn:charm:setting:records_timespan":
+                            records_timespan = tag.get("code")
+                            break
+                if records_timespan:
+                    break
         except Exception as e:
-            logger.warning(f"Could not fetch cohort records_timespan for patient {patient_id}: {e}")
+            logger.warning(f"Could not fetch records_timespan from Patient {patient_id} tags: {e}")
         
         # Extract age as number from patient_info
         age_str = patient_info.get("personal_info", {}).get("age", "")
@@ -2410,25 +2435,20 @@ async def get_random_patient_pdf():
         # Generate PDF
         pdf_bytes = generate_patient_pdf(patient_info, patient_id)
         
-        # Get patient's cohort records_timespan (num_years) from cohort tags
+        # Get patient's records_timespan (num_years) from Patient resource tags
         records_timespan = None
         try:
-            # Find groups that contain this patient
-            groups_url = f"{hapi_url}/Group?member=Patient/{patient_id}"
-            r = requests.get(groups_url, timeout=10)
-            if r.status_code == 200:
-                groups_bundle = r.json()
-                for entry in groups_bundle.get("entry", []):
-                    group = entry.get("resource", {})
-                    if "meta" in group and "tag" in group["meta"]:
-                        for tag in group["meta"]["tag"]:
-                            if tag.get("system") == "urn:charm:setting:records_timespan":
-                                records_timespan = tag.get("code")
-                                break
-                    if records_timespan:
-                        break
+            # Look for the Patient resource in all_resources and check its meta tags
+            for patient_resource in all_resources.get("Patient", []):
+                if "meta" in patient_resource and "tag" in patient_resource["meta"]:
+                    for tag in patient_resource["meta"]["tag"]:
+                        if tag.get("system") == "urn:charm:setting:records_timespan":
+                            records_timespan = tag.get("code")
+                            break
+                if records_timespan:
+                    break
         except Exception as e:
-            logger.warning(f"Could not fetch cohort records_timespan for random patient {patient_id}: {e}")
+            logger.warning(f"Could not fetch records_timespan from Patient {patient_id} tags: {e}")
         
         # Extract age as number from patient_info
         age_str = patient_info.get("personal_info", {}).get("age", "")
