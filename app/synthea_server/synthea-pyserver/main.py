@@ -954,6 +954,8 @@ class SyntheaRequest(BaseModel):
                 "min_age": 0,
                 "max_age": 140,
                 "gender": "both",
+                "state": "",
+                "city": "",
                 "use_population_sampling": True
             }
         }
