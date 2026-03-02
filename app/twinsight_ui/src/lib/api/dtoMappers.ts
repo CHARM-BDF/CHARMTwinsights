@@ -6,6 +6,10 @@ import type {
   PatientSummary,
 } from '../contracts/types';
 
+function asRecord(input: unknown): Record<string, unknown> {
+  return typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+}
+
 export function mapCohortSummary(input: Record<string, unknown>): CohortSummary {
   return {
     cohortId: String(input.cohortId ?? input.cohort_id ?? 'unknown'),
@@ -17,12 +21,26 @@ export function mapCohortSummary(input: Record<string, unknown>): CohortSummary 
 }
 
 export function mapGenerationJob(input: Record<string, unknown>): GenerationJob {
+  const requestData = asRecord(input.request_data ?? input.requestData);
+  const resultData = asRecord(input.result);
+  const rawProgress = Number(input.progress ?? 0);
+  const normalizedProgress = Number.isFinite(rawProgress)
+    ? Math.max(0, Math.min(rawProgress > 1 ? rawProgress / 100 : rawProgress, 1))
+    : 0;
   const rawEta = input.estimatedRemainingSeconds ?? input.estimated_remaining_seconds;
   return {
     jobId: String(input.jobId ?? input.job_id ?? 'unknown'),
-    cohortId: String(input.cohortId ?? input.cohort_id ?? 'unknown'),
+    cohortId: String(
+      input.cohortId ??
+        input.cohort_id ??
+        requestData.cohortId ??
+        requestData.cohort_id ??
+        resultData.cohort_id ??
+        resultData.cohortId ??
+        'unknown',
+    ),
     status: (input.status as GenerationJob['status']) ?? 'queued',
-    progress: Number(input.progress ?? 0),
+    progress: normalizedProgress,
     currentPhase: String(input.currentPhase ?? input.current_phase ?? 'queued'),
     createdAt: String(input.createdAt ?? input.created_at ?? new Date().toISOString()),
     estimatedRemainingSeconds: rawEta === null || rawEta === undefined ? null : Number(rawEta),

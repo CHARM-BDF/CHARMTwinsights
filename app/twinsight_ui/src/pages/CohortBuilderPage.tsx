@@ -3,12 +3,15 @@ import { useForm } from 'react-hook-form';
 import { PageHeader } from '../components/PageHeader';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { CheckboxInput } from '../components/CheckboxInput';
+import { DataTable } from '../components/DataTable';
 import { SelectInput } from '../components/SelectInput';
 import { TextInput } from '../components/TextInput';
 import { JsonPreview } from '../components/JsonPreview';
 import { ErrorBanner } from '../components/ErrorBanner';
+import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { StatusBadge } from '../components/StatusBadge';
 import { cohortGenerationIntentSchema, type CohortGenerationIntent } from '../lib/contracts/schemas';
-import { useCreateGenerationIntent } from '../features/cohorts/hooks';
+import { useCreateGenerationIntent, useGenerationJobs } from '../features/cohorts/hooks';
 import { useSettings } from '../app/settings-context';
 import styles from './CohortBuilderPage.module.css';
 
@@ -22,8 +25,13 @@ const stateOptions = [
 export function CohortBuilderPage() {
   const { serviceMode } = useSettings();
   const createMutation = useCreateGenerationIntent();
+  const jobsQuery = useGenerationJobs();
   const mutationErrorMessage =
     createMutation.error instanceof Error ? createMutation.error.message : 'Unable to queue generation intent.';
+  const sortedJobs = (jobsQuery.data ?? [])
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const latestQueuedJob = createMutation.data ?? sortedJobs[0] ?? null;
 
   const form = useForm<CohortGenerationIntent>({
     resolver: zodResolver(cohortGenerationIntentSchema),
@@ -123,24 +131,66 @@ export function CohortBuilderPage() {
             onChange={(event) => form.setValue('usePopulationSampling', event.target.checked)}
           />
 
-          <PrimaryButton type="submit" disabled={createMutation.isPending || serviceMode === 'direct'}>
+          <PrimaryButton type="submit" disabled={createMutation.isPending}>
             {createMutation.isPending ? 'Submitting...' : 'Create Generation Intent'}
           </PrimaryButton>
 
           {serviceMode === 'direct' ? (
-            <p className={styles.hint}>Switch to mock mode to submit generation intents in this phase.</p>
+            <p className={styles.hint}>Direct mode submits generation intents as async backend jobs.</p>
           ) : null}
         </form>
 
         <aside className={styles.previewColumn}>
           <JsonPreview title="Submission Preview" value={form.watch()} />
-          {createMutation.data ? (
-            <JsonPreview title="Queued Job" value={createMutation.data} />
+          {latestQueuedJob ? (
+            <JsonPreview title="Latest Job" value={latestQueuedJob} />
           ) : (
-            <p className={styles.hint}>Submit the form to preview queued job metadata.</p>
+            <p className={styles.hint}>Submit the form to preview the latest job metadata.</p>
           )}
         </aside>
       </div>
+
+      <section className={styles.jobsSection} aria-label="Generation jobs">
+        <h2>Generation Jobs</h2>
+        <p className={styles.hint}>Showing the full current job list. Refreshes every 5 seconds.</p>
+
+        {jobsQuery.isLoading ? <LoadingSkeleton lines={4} /> : null}
+        {jobsQuery.isError ? <ErrorBanner message="Unable to load generation jobs." /> : null}
+
+        {!jobsQuery.isLoading && !jobsQuery.isError ? (
+          sortedJobs.length > 0 ? (
+            <DataTable
+              caption="Recent generation jobs"
+              rows={sortedJobs}
+              rowKey={(row) => row.jobId}
+              columns={[
+                { key: 'jobId', header: 'Job ID', render: (row) => row.jobId },
+                { key: 'cohortId', header: 'Cohort ID', render: (row) => row.cohortId },
+                { key: 'status', header: 'Status', render: (row) => <StatusBadge status={row.status} /> },
+                { key: 'phase', header: 'Current Phase', render: (row) => row.currentPhase },
+                {
+                  key: 'progress',
+                  header: 'Progress',
+                  render: (row) => `${Math.round(Math.max(0, Math.min(row.progress, 1)) * 100)}%`,
+                },
+                {
+                  key: 'eta',
+                  header: 'ETA',
+                  render: (row) =>
+                    row.estimatedRemainingSeconds === null ? 'n/a' : `${row.estimatedRemainingSeconds}s`,
+                },
+                {
+                  key: 'createdAt',
+                  header: 'Created',
+                  render: (row) => new Date(row.createdAt).toLocaleString(),
+                },
+              ]}
+            />
+          ) : (
+            <p className={styles.hint}>No generation jobs found yet.</p>
+          )
+        ) : null}
+      </section>
     </>
   );
 }

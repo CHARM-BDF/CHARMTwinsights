@@ -43,6 +43,24 @@ function runDetailPath(runId: string) {
   return `/runs/${runId}`;
 }
 
+function toDirectGenerationIntentPayload(payload: CohortGenerationIntent) {
+  const normalizedState = payload.state?.trim();
+  const normalizedCity = payload.city?.trim();
+
+  return {
+    cohort_id: payload.cohortId,
+    num_patients: payload.numPatients,
+    num_years: payload.numYears,
+    exporter: 'fhir',
+    min_age: payload.minAge,
+    max_age: payload.maxAge,
+    gender: payload.gender,
+    state: normalizedState ? normalizedState : undefined,
+    city: normalizedCity ? normalizedCity : undefined,
+    use_population_sampling: payload.usePopulationSampling,
+  };
+}
+
 function buildCohortService(mode: ServiceMode): CohortService {
   const registry = getEndpointRegistry(mode);
 
@@ -59,16 +77,32 @@ function buildCohortService(mode: ServiceMode): CohortService {
     },
     async listGenerationJobs() {
       const path = pathFor(mode, 'listGenerationJobs');
-      const response = await fetchJson<Record<string, unknown>>(join(registry.cohortsBaseUrl, path));
-      const rows = (response.jobs as Record<string, unknown>[]) ?? (response.data as Record<string, unknown>[]) ?? (response as unknown as Record<string, unknown>[]);
+      const requestPath = mode === 'direct' ? `${path}?limit=500` : path;
+      const response = await fetchJson<Record<string, unknown> | Record<string, unknown>[]>(
+        join(registry.cohortsBaseUrl, requestPath),
+      );
+      const rows = Array.isArray(response)
+        ? response
+        : ((response.jobs as Record<string, unknown>[]) ??
+          (response.data as Record<string, unknown>[]) ??
+          (response as unknown as Record<string, unknown>[]));
       return rows.map(mapGenerationJob);
     },
     async createGenerationIntent(payload: CohortGenerationIntent) {
+      const path = pathFor(mode, 'createGenerationIntent');
+
       if (mode === 'direct') {
-        throw new Error('Direct mode is currently read-only. Switch to mock mode for generation intent creation.');
+        const response = await fetchJson<Record<string, unknown>>(join(registry.cohortsBaseUrl, path), {
+          method: 'POST',
+          body: JSON.stringify(toDirectGenerationIntentPayload(payload)),
+        });
+        return mapGenerationJob({
+          ...response,
+          cohort_id: payload.cohortId,
+          current_phase: response.current_phase ?? 'queued',
+        });
       }
 
-      const path = pathFor(mode, 'createGenerationIntent');
       const response = await fetchJson<Record<string, unknown>>(join(registry.cohortsBaseUrl, path), {
         method: 'POST',
         body: JSON.stringify(payload),

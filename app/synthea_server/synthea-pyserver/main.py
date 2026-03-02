@@ -34,6 +34,7 @@ demographics_data = None
 
 # Allowed datatype values for validation
 ALLOWED_DATATYPES = {"external", "synthetic"}
+HAPI_REQUEST_TIMEOUT_SECONDS = 20
 
 class JobStatus:
     def __init__(self, job_id: str, request_data: dict):
@@ -52,8 +53,12 @@ class JobStatus:
         self.estimated_remaining_seconds = None
 
     def to_dict(self):
+        cohort_id = None
+        if isinstance(self.request_data, dict):
+            cohort_id = self.request_data.get("cohort_id")
         return {
             "job_id": self.id,
+            "cohort_id": cohort_id,
             "status": self.status,
             "progress": self.progress,
             "current_phase": self.current_phase,
@@ -554,7 +559,7 @@ def fetch_group_by_id(hapi_url, group_id):
     url = f"{hapi_url.rstrip('/')}/Group/{group_id}"
     logger.debug(f"Fetching group from URL: {url}")
     try:
-        r = requests.get(url)
+        r = requests.get(url, timeout=HAPI_REQUEST_TIMEOUT_SECONDS)
         logger.debug(f"Group fetch response status: {r.status_code}")
         if r.status_code == 200:
             group_data = r.json()
@@ -585,7 +590,7 @@ def fetch_all_groups(hapi_url):
         # Keep fetching pages until there are no more
         while next_url:
             print(f"Fetching groups from: {next_url}")
-            r = requests.get(next_url)
+            r = requests.get(next_url, timeout=HAPI_REQUEST_TIMEOUT_SECONDS)
             if r.status_code != 200:
                 print(f"Error fetching groups: HTTP {r.status_code}")
                 break
@@ -627,7 +632,7 @@ def fetch_all_patients(hapi_url):
         # Keep fetching pages until there are no more
         while next_url:
             print(f"Fetching patients from: {next_url}")
-            r = requests.get(next_url)
+            r = requests.get(next_url, timeout=HAPI_REQUEST_TIMEOUT_SECONDS)
             if r.status_code != 200:
                 print(f"Error fetching patients: HTTP {r.status_code}")
                 break
@@ -1573,7 +1578,7 @@ async def list_all_cohorts():
     
     # Check if the HAPI server is running
     try:
-        r = requests.get(hapi_url + "/$meta")
+        r = requests.get(hapi_url + "/$meta", timeout=5)
         r.raise_for_status()
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable. (It may be starting up.)"})

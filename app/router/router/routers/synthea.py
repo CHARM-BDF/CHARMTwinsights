@@ -268,13 +268,13 @@ async def get_job_status(job_id: str):
 
 
 @router.get("/synthetic-patients/jobs", response_class=JSONResponse)
-async def list_all_jobs():
+async def list_all_jobs(limit: int = Query(500, ge=1, le=5000)):
     """List all synthetic patient generation jobs"""
     url = f"{settings.synthea_server_url}/synthetic-patients/jobs"
     
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
+            resp = await client.get(url, params={"limit": limit})
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPStatusError as e:

@@ -1,4 +1,4 @@
-import { mapCohortSummary, mapModelDescriptor, mapPatientSummary, mapRunRecord } from './dtoMappers';
+import { mapCohortSummary, mapGenerationJob, mapModelDescriptor, mapPatientSummary, mapRunRecord } from './dtoMappers';
 
 describe('dtoMappers', () => {
   it('maps cohort summary from snake_case payloads', () => {
@@ -18,6 +18,36 @@ describe('dtoMappers', () => {
     expect(result.runId).toBe('run-1');
     expect(result.imageTag).toBe('model:latest');
     expect(result.status).toBe('queued');
+  });
+
+  it('maps generation job cohort from nested request_data', () => {
+    const result = mapGenerationJob({
+      job_id: 'job-1',
+      status: 'running',
+      progress: 0.5,
+      request_data: { cohort_id: 'test-cohort' },
+    });
+    expect(result.jobId).toBe('job-1');
+    expect(result.cohortId).toBe('test-cohort');
+    expect(result.progress).toBe(0.5);
+  });
+
+  it('normalizes generation job progress sent as percentage', () => {
+    const result = mapGenerationJob({
+      job_id: 'job-1',
+      cohort_id: 'test-cohort',
+      progress: 62,
+    });
+    expect(result.progress).toBe(0.62);
+  });
+
+  it('maps generation job cohort from completed result payload', () => {
+    const result = mapGenerationJob({
+      job_id: 'job-2',
+      status: 'completed',
+      result: { cohort_id: 'result-cohort' },
+    });
+    expect(result.cohortId).toBe('result-cohort');
   });
 
   it('maps patients without forcing Unknown name placeholders', () => {
