@@ -14,7 +14,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run synthetic + FHIR validation target
+      - name: Run synthetic + FHIR + ingestion validation target
         run: ./ci/run.sh synthetic-fhir-validation
 
   model-validation:

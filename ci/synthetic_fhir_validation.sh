@@ -127,4 +127,7 @@ if [ "$group_member_count" -lt 1 ]; then
   exit 1
 fi
 
+log "Running external FHIR ingestion validation suite"
+"$ROOT_DIR/ci/external_fhir_ingestion_validation.sh"
+
 log "Synthetic + FHIR validation passed for cohort ${COHORT_ID}"

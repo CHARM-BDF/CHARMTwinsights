@@ -154,6 +154,7 @@ CI entrypoints are in `ci/`, and GitHub Actions calls the same scripts. This let
 ```
 
 `model-validation` includes: built-in model image build, model server startup, schema validation tests, and API smoke checks for model listing, metadata retrieval, and prediction for each built-in model.
+`synthetic-fhir-validation` includes: synthetic generation job execution, HAPI persistence checks, and external FHIR ingestion validation (success paths plus core validation failures).
 
 By default this target starts/stops only the model validation stack. To keep services running for debugging:
 
