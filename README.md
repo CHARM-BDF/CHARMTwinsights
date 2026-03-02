@@ -148,6 +148,9 @@ CI entrypoints are in `ci/`, and GitHub Actions calls the same scripts. This let
 ```bash
 # project root
 ./ci/run.sh model-validation
+./ci/run.sh synthetic-fhir-validation
+# or all local CI targets:
+./ci/run.sh all
 ```
 
 By default this target starts/stops only the model validation stack. To keep services running for debugging:

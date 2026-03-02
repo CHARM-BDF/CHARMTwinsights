@@ -6,6 +6,7 @@ SHELL := /bin/bash
 help:
 	@echo "Available targets:"
 	@echo "  local-ci-checks            Run local CI checks (all current CI targets)"
+	@echo "  local-ci-synthetic-fhir    Run synthetic generation + FHIR validation CI target"
 	@echo "  local-ci-model-validation  Run model validation CI target only"
 	@echo "  build                      Build all app and model images"
 	@echo "  up                         Start the app stack in detached mode"
@@ -20,6 +21,10 @@ help:
 .PHONY: local-ci-checks
 local-ci-checks:
 	./ci/run.sh all
+
+.PHONY: local-ci-synthetic-fhir
+local-ci-synthetic-fhir:
+	./ci/run.sh synthetic-fhir-validation
 
 .PHONY: local-ci-model-validation
 local-ci-model-validation:

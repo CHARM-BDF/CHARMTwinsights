@@ -7,6 +7,16 @@ on:
     branches: [ci-checks, main-dev, main]
 
 jobs:
+  synthetic-fhir-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run synthetic + FHIR validation target
+        run: ./ci/run.sh synthetic-fhir-validation
+
   model-validation:
     runs-on: ubuntu-latest
     timeout-minutes: 45

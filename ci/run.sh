@@ -8,6 +8,7 @@ usage() {
 Usage: ./ci/run.sh <target>
 
 Targets:
+  synthetic-fhir-validation  Run synthetic generation + FHIR validation checks
   model-validation   Run model server validation checks (docker-based)
   all                Run all currently defined CI targets
 EOF
@@ -16,10 +17,14 @@ EOF
 target="${1:-all}"
 
 case "$target" in
+  synthetic-fhir-validation)
+    "$ROOT_DIR/ci/synthetic_fhir_validation.sh"
+    ;;
   model-validation)
     "$ROOT_DIR/ci/model_validation.sh"
     ;;
   all)
+    "$ROOT_DIR/ci/synthetic_fhir_validation.sh"
     "$ROOT_DIR/ci/model_validation.sh"
     ;;
   -h|--help|help)
