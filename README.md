@@ -152,6 +152,7 @@ CI entrypoints are in `ci/`, and GitHub Actions calls the same scripts. This let
 ./ci/run.sh mcp-copd-workflow-validation
 ./ci/run.sh timeseries-validation
 ./ci/run.sh pdf-validation
+./ci/run.sh router-validation
 # or all local CI targets:
 ./ci/run.sh all
 ```
@@ -161,6 +162,7 @@ CI entrypoints are in `ci/`, and GitHub Actions calls the same scripts. This let
 `mcp-copd-workflow-validation` includes: synthetic precondition generation, deterministic external fixture ingestion, and MCP protocol-level COPD workflow checks (patient search/data retrieval, model metadata retrieval, deterministic input mapping, model execution assertions) without relying on MCP `/health`.
 `timeseries-validation` includes: TimeAutoDiff model-information check plus single/multi-patient synthetic timeseries generation assertions (payload shape, sequence length, feature consistency, and conditioning echoes).
 `pdf-validation` includes: synthetic precondition patient generation plus patient/random PDF binary validation (`Content-Type: application/pdf`, `%PDF` file signature, minimum size) and missing-patient failure-path checks.
+`router-validation` includes: router proxy smoke checks across modeling, synthetic generation job flow, stats patient retrieval, timeseries generation, PDF retrieval, and external FHIR ingestion, validating that the API gateway wiring works end-to-end for core feature paths.
 
 By default this target starts/stops only the model validation stack. To keep services running for debugging:
 

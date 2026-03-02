@@ -13,6 +13,7 @@ Targets:
   mcp-copd-workflow-validation  Run deterministic MCP COPD workflow validation checks
   timeseries-validation  Run synthetic timeseries generation validation checks
   pdf-validation  Run synthetic patient PDF generation validation checks
+  router-validation  Run router proxy validation checks for core feature paths
   all                Run all currently defined CI targets
 EOF
 }
@@ -35,12 +36,16 @@ case "$target" in
   pdf-validation)
     "$ROOT_DIR/ci/pdf_validation.sh"
     ;;
+  router-validation)
+    "$ROOT_DIR/ci/router_validation.sh"
+    ;;
   all)
     "$ROOT_DIR/ci/synthetic_fhir_validation.sh"
     "$ROOT_DIR/ci/model_validation.sh"
     "$ROOT_DIR/ci/mcp_copd_workflow_validation.sh"
     "$ROOT_DIR/ci/timeseries_validation.sh"
     "$ROOT_DIR/ci/pdf_validation.sh"
+    "$ROOT_DIR/ci/router_validation.sh"
     ;;
   -h|--help|help)
     usage

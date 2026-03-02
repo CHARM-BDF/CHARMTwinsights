@@ -11,6 +11,7 @@ help:
 	@echo "  local-ci-mcp-copd          Run deterministic MCP COPD workflow CI target"
 	@echo "  local-ci-timeseries        Run synthetic timeseries validation CI target"
 	@echo "  local-ci-pdf               Run synthetic patient PDF validation CI target"
+	@echo "  local-ci-router            Run router proxy validation CI target"
 	@echo "  build                      Build all app and model images"
 	@echo "  up                         Start the app stack in detached mode"
 	@echo "  down                       Stop the app stack"
@@ -44,6 +45,10 @@ local-ci-timeseries:
 .PHONY: local-ci-pdf
 local-ci-pdf:
 	./ci/run.sh pdf-validation
+
+.PHONY: local-ci-router
+local-ci-router:
+	./ci/run.sh router-validation
 
 .PHONY: build
 build:
