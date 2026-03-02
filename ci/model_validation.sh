@@ -43,4 +43,7 @@ wait_for_http "http://localhost:8004/health" 180 3
 log "Running model schema validation suite"
 APP_PORT=8004 "$APP_DIR/model_server/models/test_validation.sh"
 
+log "Running model registration + metadata + prediction smoke checks"
+"$ROOT_DIR/ci/model_registry_prediction_smoke.sh"
+
 log "Model validation target passed"
