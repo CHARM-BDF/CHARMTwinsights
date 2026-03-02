@@ -8,6 +8,7 @@ help:
 	@echo "  local-ci-checks            Run local CI checks (all current CI targets)"
 	@echo "  local-ci-synthetic-fhir    Run synthetic generation + FHIR + external ingestion validation CI target"
 	@echo "  local-ci-model-validation  Run model validation CI target only"
+	@echo "  local-ci-mcp-copd          Run deterministic MCP COPD workflow CI target"
 	@echo "  build                      Build all app and model images"
 	@echo "  up                         Start the app stack in detached mode"
 	@echo "  down                       Stop the app stack"
@@ -29,6 +30,10 @@ local-ci-synthetic-fhir:
 .PHONY: local-ci-model-validation
 local-ci-model-validation:
 	./ci/run.sh model-validation
+
+.PHONY: local-ci-mcp-copd
+local-ci-mcp-copd:
+	./ci/run.sh mcp-copd-workflow-validation
 
 .PHONY: build
 build:

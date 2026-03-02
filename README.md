@@ -149,12 +149,14 @@ CI entrypoints are in `ci/`, and GitHub Actions calls the same scripts. This let
 # project root
 ./ci/run.sh model-validation
 ./ci/run.sh synthetic-fhir-validation
+./ci/run.sh mcp-copd-workflow-validation
 # or all local CI targets:
 ./ci/run.sh all
 ```
 
 `model-validation` includes: built-in model image build, model server startup, schema validation tests, and API smoke checks for model listing, metadata retrieval, and prediction for each built-in model.
 `synthetic-fhir-validation` includes: synthetic generation job execution, HAPI persistence checks, and external FHIR ingestion validation (success paths plus core validation failures).
+`mcp-copd-workflow-validation` includes: synthetic precondition generation, deterministic external fixture ingestion, and MCP protocol-level COPD workflow checks (patient search/data retrieval, model metadata retrieval, deterministic input mapping, model execution assertions) without relying on MCP `/health`.
 
 By default this target starts/stops only the model validation stack. To keep services running for debugging:
 

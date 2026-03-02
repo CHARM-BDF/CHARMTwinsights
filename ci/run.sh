@@ -10,6 +10,7 @@ Usage: ./ci/run.sh <target>
 Targets:
   synthetic-fhir-validation  Run synthetic generation + FHIR + external ingestion validation checks
   model-validation   Run model server validation checks (docker-based)
+  mcp-copd-workflow-validation  Run deterministic MCP COPD workflow validation checks
   all                Run all currently defined CI targets
 EOF
 }
@@ -23,9 +24,13 @@ case "$target" in
   model-validation)
     "$ROOT_DIR/ci/model_validation.sh"
     ;;
+  mcp-copd-workflow-validation)
+    "$ROOT_DIR/ci/mcp_copd_workflow_validation.sh"
+    ;;
   all)
     "$ROOT_DIR/ci/synthetic_fhir_validation.sh"
     "$ROOT_DIR/ci/model_validation.sh"
+    "$ROOT_DIR/ci/mcp_copd_workflow_validation.sh"
     ;;
   -h|--help|help)
     usage
