@@ -1,0 +1,18 @@
+name: CI Model Validation
+
+on:
+  pull_request:
+    branches: [ci-checks, main-dev, main]
+  push:
+    branches: [ci-checks, main-dev, main]
+
+jobs:
+  model-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run model validation target
+        run: ./ci/run.sh model-validation
