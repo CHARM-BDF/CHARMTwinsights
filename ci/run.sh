@@ -11,6 +11,8 @@ Targets:
   synthetic-fhir-validation  Run synthetic generation + FHIR + external ingestion validation checks
   model-validation   Run model server validation checks (docker-based)
   mcp-copd-workflow-validation  Run deterministic MCP COPD workflow validation checks
+  timeseries-validation  Run synthetic timeseries generation validation checks
+  pdf-validation  Run synthetic patient PDF generation validation checks
   all                Run all currently defined CI targets
 EOF
 }
@@ -27,10 +29,18 @@ case "$target" in
   mcp-copd-workflow-validation)
     "$ROOT_DIR/ci/mcp_copd_workflow_validation.sh"
     ;;
+  timeseries-validation)
+    "$ROOT_DIR/ci/timeseries_validation.sh"
+    ;;
+  pdf-validation)
+    "$ROOT_DIR/ci/pdf_validation.sh"
+    ;;
   all)
     "$ROOT_DIR/ci/synthetic_fhir_validation.sh"
     "$ROOT_DIR/ci/model_validation.sh"
     "$ROOT_DIR/ci/mcp_copd_workflow_validation.sh"
+    "$ROOT_DIR/ci/timeseries_validation.sh"
+    "$ROOT_DIR/ci/pdf_validation.sh"
     ;;
   -h|--help|help)
     usage

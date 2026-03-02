@@ -36,3 +36,23 @@ jobs:
 
       - name: Run MCP COPD workflow validation target
         run: ./ci/run.sh mcp-copd-workflow-validation
+
+  timeseries-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run timeseries validation target
+        run: ./ci/run.sh timeseries-validation
+
+  pdf-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run PDF validation target
+        run: ./ci/run.sh pdf-validation
