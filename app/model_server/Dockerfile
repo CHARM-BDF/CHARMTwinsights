@@ -19,7 +19,7 @@ RUN poetry --version
 WORKDIR /app
 
 # Copy dependency management files.
-COPY pyproject.toml ./
+COPY pyproject.toml poetry.lock ./
 
 # install just the dependencies to start
 RUN poetry install --no-interaction --no-ansi --only main --no-root

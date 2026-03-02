@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Body
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
 from datetime import datetime
 import httpx
@@ -217,6 +217,23 @@ async def generate_download_synthetic_patients(
 
 # Pydantic model for async job requests
 class SyntheaAsyncRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "num_patients": 10,
+                "num_years": 1,
+                "cohort_id": "default",
+                "exporter": "fhir",
+                "min_age": 0,
+                "max_age": 140,
+                "gender": "both",
+                "state": "",
+                "city": "",
+                "use_population_sampling": True
+            }
+        }
+    )
+    
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
     cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
