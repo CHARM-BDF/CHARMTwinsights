@@ -11,7 +11,9 @@ mkdir -p "$PROJECT_ROOT/scripts/mimic_data"
 cd "$PROJECT_ROOT/scripts/mimic_data"
 
 # Download the MIMIC-IV demo dataset from Google Drive
-curl "https://drive.usercontent.google.com/download?id=1UBfaFQF1kuXTlwZEom7AQG_kmWHOi1Xg&confirm=y" -o "$FILE_ROOT.tar.gz.gpg"
+if [ ! -f "$FILE_ROOT.tar.gz.gpg" ]; then
+  curl "https://drive.usercontent.google.com/download?id=1UBfaFQF1kuXTlwZEom7AQG_kmWHOi1Xg&confirm=y" -o "$FILE_ROOT.tar.gz.gpg"
+fi
 
 # Decrypt the downloaded file using GPG - it will ask for the passphrase
 gpg -o "$FILE_ROOT.tar.gz" --decrypt "$FILE_ROOT.tar.gz.gpg"
