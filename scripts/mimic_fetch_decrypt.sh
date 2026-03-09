@@ -5,6 +5,7 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # get the project root directory, using git
 PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+FILE_ROOT="${FILE_ROOT:-mimic_iv_100pt_demo}"
 
 mkdir -p "$PROJECT_ROOT/scripts/mimic_data"
 
@@ -15,7 +16,10 @@ if [ ! -f "$FILE_ROOT.tar.gz.gpg" ]; then
   curl "https://drive.usercontent.google.com/download?id=1UBfaFQF1kuXTlwZEom7AQG_kmWHOi1Xg&confirm=y" -o "$FILE_ROOT.tar.gz.gpg"
 fi
 
-# Decrypt the downloaded file using GPG - it will ask for the passphrase
-gpg -o "$FILE_ROOT.tar.gz" --decrypt "$FILE_ROOT.tar.gz.gpg"
 
-tar -xzf "$FILE_ROOT.tar.gz"
+if [ ! -f "$FILE_ROOT.tar.gz" ]; then
+  # Decrypt the downloaded file using GPG - it will ask for the passphrase
+  gpg -o "$FILE_ROOT.tar.gz" --decrypt "$FILE_ROOT.tar.gz.gpg"
+  tar -xzf "$FILE_ROOT.tar.gz"
+fi
+
