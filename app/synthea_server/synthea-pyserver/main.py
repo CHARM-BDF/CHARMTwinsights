@@ -1089,8 +1089,8 @@ async def get_job_status(job_id: str):
     with jobs_lock:
         if job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
-        job = jobs[job_id]
-    return job.to_dict()
+        result = jobs[job_id].to_dict()
+    return result
 
 @app.get("/synthetic-patients/jobs")
 async def list_recent_jobs(limit: int = 50):
@@ -1098,7 +1098,8 @@ async def list_recent_jobs(limit: int = 50):
     # Sort by creation time, newest first
     with jobs_lock:
         sorted_jobs = sorted(jobs.values(), key=lambda j: j.created_at, reverse=True)
-    return [job.to_dict() for job in sorted_jobs[:limit]]
+        result = [job.to_dict() for job in sorted_jobs[:limit]]
+    return result
 
 @app.delete("/synthetic-patients/jobs/{job_id}")
 async def cancel_job(job_id: str):
