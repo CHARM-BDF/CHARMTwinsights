@@ -141,6 +141,19 @@ Summary statistics about generated patient data are available under endpoints at
 stat_server_py/test_stats.sh
 ```
 
+### 5a. Run CI Checks Locally
+
+CI entrypoints are in `ci/`, and GitHub Actions calls the same scripts. This lets you test workflow logic locally before pushing.
+
+```bash
+# project root
+./ci/run.sh model-validation
+./ci/run.sh router-validation
+./ci/run.sh all
+```
+
+See [`ci/README.md`](ci/README.md) for the full list of targets, how to keep services running for debugging, and how to add new CI targets.
+
 ### 6. Stopping and Cleaning Up
 
 #### Basic Stop

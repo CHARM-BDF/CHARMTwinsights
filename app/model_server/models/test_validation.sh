@@ -400,25 +400,6 @@ run_registration_test "Register with examples that fail schema validation" 400 '
 }'
 
 # ====================
-# Summary
-# ====================
-echo -e "${YELLOW}======================================${NC}"
-echo -e "${YELLOW}Test Summary${NC}"
-echo -e "${YELLOW}======================================${NC}"
-echo "Total Tests: $TOTAL_TESTS"
-echo -e "Passed: ${GREEN}$PASSED_TESTS${NC}"
-echo -e "Failed: ${RED}$FAILED_TESTS${NC}"
-echo ""
-
-if [ $FAILED_TESTS -eq 0 ]; then
-    echo -e "${GREEN}✓ All tests passed!${NC}"
-    exit 0
-else
-    echo -e "${RED}✗ Some tests failed${NC}"
-    exit 1
-fi
-
-# ====================
 # ReachableFromModel Tests (reachable_from enum expansion)
 # ====================
 echo -e "${YELLOW}--- ReachableFromModel Tests (reachable_from) ---${NC}"
@@ -447,3 +428,22 @@ run_test "ReachableFromModel: Invalid ontology term" 400 '{
         "age_years": 34
     }]
 }'
+
+# ====================
+# Summary
+# ====================
+echo -e "${YELLOW}======================================${NC}"
+echo -e "${YELLOW}Test Summary${NC}"
+echo -e "${YELLOW}======================================${NC}"
+echo "Total Tests: $TOTAL_TESTS"
+echo -e "Passed: ${GREEN}$PASSED_TESTS${NC}"
+echo -e "Failed: ${RED}$FAILED_TESTS${NC}"
+echo ""
+
+if [ $FAILED_TESTS -eq 0 ]; then
+    echo -e "${GREEN}✓ All tests passed!${NC}"
+    exit 0
+else
+    echo -e "${RED}✗ Some tests failed${NC}"
+    exit 1
+fi

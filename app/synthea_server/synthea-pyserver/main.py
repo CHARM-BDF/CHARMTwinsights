@@ -8,8 +8,17 @@ import shutil
 import json
 import glob
 import requests
-from pydantic import BaseModel, Field, field_validator
+import httpx
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, List, Set
+import sys
+from pathlib import Path
+# Add the current directory to path for local imports
+sys.path.insert(0, str(Path(__file__).parent))
+from timeseries import (
+    generate_synthetic_timeseries,
+    get_model_info as get_timeseries_model_info,
+)
 import re
 import logging
 import uuid
@@ -18,6 +27,8 @@ from datetime import datetime
 import random
 import csv
 import threading
+
+from .generate_pdf import extract_patient_info_for_pdf, generate_patient_pdf
 
 # Create a logger
 logging.basicConfig(level=logging.INFO)
@@ -149,7 +160,8 @@ def sample_states_by_population(num_patients: int) -> Dict[str, int]:
 @app.get("/")
 def redirect_to_docs():
     """Redirects the root URL to the API documentation."""
-    return JSONResponse(status_code=307, content={"message": "Redirecting to /docs for API documentation."}, headers={"Location": "/docs"})
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
@@ -613,6 +625,73 @@ def fetch_all_groups(hapi_url):
         return []
 
 
+async def fetch_cohort_groups_async(hapi_url: str) -> List[Dict]:
+    """Fetches cohort Group resources from HAPI FHIR server using async HTTP.
+    
+    Optimizations:
+    - Uses async httpx for non-blocking requests
+    - Uses _elements to fetch only needed fields (id, meta, member)
+    
+    Note: Server-side tag filtering with wildcard codes is not supported by HAPI FHIR,
+    so we fetch all groups and filter client-side for cohort tags.
+    
+    Args:
+        hapi_url: Base URL of the HAPI FHIR server.
+    Returns:
+        A list of Group resources with cohort information.
+    """
+    all_groups = []
+    # Fetch all groups with only needed elements (no server-side tag filter - HAPI doesn't support wildcard)
+    base_url = f"{hapi_url.rstrip('/')}/Group"
+    params = {
+        "_elements": "id,meta,member",  # Only fetch needed fields
+        "_count": "500"
+    }
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # First request
+        try:
+            response = await client.get(base_url, params=params)
+            response.raise_for_status()
+        except Exception as e:
+            logger.error(f"Error fetching cohort groups: {e}")
+            return []
+        
+        bundle = response.json()
+        
+        # Process first page
+        if "entry" in bundle:
+            all_groups.extend([entry["resource"] for entry in bundle["entry"]])
+            logger.info(f"Retrieved {len(bundle['entry'])} cohort groups from first page")
+        
+        # Handle pagination
+        while True:
+            next_url = None
+            if "link" in bundle:
+                for link in bundle["link"]:
+                    if link.get("relation") == "next":
+                        next_url = link.get("url")
+                        break
+            
+            if not next_url:
+                break
+            
+            try:
+                response = await client.get(next_url)
+                response.raise_for_status()
+                bundle = response.json()
+                
+                if "entry" in bundle:
+                    all_groups.extend([entry["resource"] for entry in bundle["entry"]])
+                    logger.info(f"Retrieved {len(bundle['entry'])} more cohort groups. Total: {len(all_groups)}")
+            except Exception as e:
+                logger.error(f"Error fetching next page: {e}")
+                break
+    
+    logger.info(f"Total cohort groups retrieved: {len(all_groups)}")
+    return all_groups
+
+
 def fetch_all_patients(hapi_url):
     """ Fetches all FHIR Patient resources from the HAPI FHIR server.
     Args:
@@ -673,12 +752,13 @@ def merge_group_members(existing_group, new_patient_ids):
 
 
 
-def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (success (bool), message (str), patient_ids (set of str) or None)
+def post_bundle(json_file, hapi_url, tags: dict[str, str] = None, generation_settings: dict = None): # returns (success (bool), message (str), patient_ids (set of str) or None)
     """ Posts a FHIR Bundle or resource to the HAPI FHIR server. Returned patient_ids is a set of patient IDs found in the bundle, useful for cohort management.
     Args:
         json_file: Path to the JSON file containing the FHIR Bundle or resource.
         hapi_url: Base URL of the HAPI FHIR server (e.g., http://hapi:8080/fhir).
         tags: Optional dictionary of tags to apply to the resource or bundle.
+        generation_settings: Optional dict with generation settings to tag Patient resources with.
     Returns:
         A tuple (success, message, patient_ids) where:
         - success (bool): True if the post was successful, False otherwise.
@@ -689,13 +769,36 @@ def post_bundle(json_file, hapi_url, tags: dict[str, str] = None): # returns (su
     with open(json_file, "r") as f:
         bundle = json.load(f)
 
-        # collect patient IDs
+        # collect patient IDs and add generation settings tags to Patient resources
         if bundle.get("resourceType") == "Bundle" and "entry" in bundle:
             for entry in bundle["entry"]:
                 if "resource" in entry and entry["resource"].get("resourceType") == "Patient":
                     patient_id = entry["resource"].get("id")
                     if patient_id:
                         patient_ids.add(patient_id)
+                    
+                    # Add generation settings tags to each Patient resource
+                    if generation_settings:
+                        patient_resource = entry["resource"]
+                        if "meta" not in patient_resource:
+                            patient_resource["meta"] = {}
+                        if "tag" not in patient_resource["meta"]:
+                            patient_resource["meta"]["tag"] = []
+                        
+                        # Add generation settings as tags on the Patient
+                        settings_tags = [
+                            {"system": "urn:charm:setting:records_timespan", "code": str(generation_settings.get("num_years", ""))},
+                            {"system": "urn:charm:setting:gender", "code": str(generation_settings.get("gender", ""))},
+                            {"system": "urn:charm:setting:min_age", "code": str(generation_settings.get("min_age", ""))},
+                            {"system": "urn:charm:setting:max_age", "code": str(generation_settings.get("max_age", ""))},
+                        ]
+                        # Only add state/city if they were specified
+                        if generation_settings.get("state"):
+                            settings_tags.append({"system": "urn:charm:setting:state", "code": str(generation_settings.get("state"))})
+                        if generation_settings.get("city"):
+                            settings_tags.append({"system": "urn:charm:setting:city", "code": str(generation_settings.get("city"))})
+                        
+                        patient_resource["meta"]["tag"].extend(settings_tags)
          
         if tags:
             apply_tags(bundle, tags)
@@ -776,6 +879,7 @@ def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
     """ Upserts a FHIR Group resource with the given cohort ID and patient IDs.
     If the Group already exists, it merges the new patient IDs with existing members.
     If creating a new Group, adds a creation timestamp tag.
+    Note: Generation settings are now stored on Patient resources, not on the Group.
     Args:
         hapi_url: Base URL of the HAPI FHIR server (e.g., http://hapi:8080/fhir).
         cohort_id: The ID of the cohort to create or update.
@@ -840,9 +944,26 @@ def upsert_group(hapi_url, cohort_id, new_patient_ids, tags):
 
 
 class SyntheaRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "num_patients": 10,
+                "num_years": 1,
+                "cohort_id": "default",
+                "exporter": "fhir",
+                "min_age": 0,
+                "max_age": 140,
+                "gender": "both",
+                "state": "",
+                "city": "",
+                "use_population_sampling": True
+            }
+        }
+    )
+    
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
-    cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
+    cohort_id: str = Field("default", description="Cohort identifier. Use 'default' for auto-generated name (Cohort-No-X), or specify a custom FHIR-valid ID")
     exporter: str = Field("fhir", description="Export format: 'fhir' or 'csv'")
     min_age: int = Field(0, ge=0, le=140, description="Minimum patient age")
     max_age: int = Field(140, ge=0, le=140, description="Maximum patient age")
@@ -851,10 +972,26 @@ class SyntheaRequest(BaseModel):
     city: Optional[str] = Field(None, description="US city for patient generation (requires state)")
     use_population_sampling: bool = Field(True, description="Sample states by population if no state specified")
     
+    @field_validator('state', 'city', mode='before')
+    @classmethod
+    def normalize_optional_strings(cls, v):
+        """Treat 'string' placeholder from Swagger UI as None"""
+        if v == "string" or v == "":
+            return None
+        return v
+    
     @field_validator('cohort_id')
     @classmethod
     def validate_cohort_id(cls, v: str) -> str:
-        """Validate that cohort_id follows FHIR resource ID rules"""
+        """Validate cohort_id format. 
+        
+        If cohort_id is 'default' or empty, it will be replaced with a unique
+        Cohort-No-X name in create_generation_job after checking existing cohorts.
+        """
+        # Mark for auto-generation - actual name will be set in create_generation_job
+        if v == "default" or v == "" or v == "string":
+            return "auto"
+        
         # FHIR resource ID pattern: [A-Za-z0-9\-\.]{1,64}
         fhir_id_pattern = r'^[A-Za-z0-9\-\.]{1,64}$'
         
@@ -865,6 +1002,40 @@ class SyntheaRequest(BaseModel):
                 f"and be 1-64 characters long. Underscores are not allowed."
             )
         return v
+
+
+def generate_unique_cohort_name(hapi_url: str) -> str:
+    """Generate a unique cohort name in format Cohort-No-X.
+    
+    Checks existing cohorts in HAPI and finds the next available number.
+    """
+    try:
+        # Fetch all existing groups to find existing Cohort-No-X names
+        existing_numbers = set()
+        url = f"{hapi_url}/Group?_count=1000"
+        r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=10)
+        
+        if r.status_code == 200:
+            bundle = r.json()
+            for entry in bundle.get("entry", []):
+                group = entry.get("resource", {})
+                group_id = group.get("id", "")
+                # Check if it matches Cohort-No-X pattern
+                match = re.match(r'^Cohort-No-(\d+)$', group_id)
+                if match:
+                    existing_numbers.add(int(match.group(1)))
+        
+        # Find the next available number
+        next_num = 1
+        while next_num in existing_numbers:
+            next_num += 1
+        
+        return f"Cohort-No-{next_num}"
+    except Exception as e:
+        logger.warning(f"Error checking existing cohorts: {e}, falling back to timestamp-based name")
+        # Fallback to timestamp-based name if HAPI is not available
+        now = datetime.now()
+        return f"Cohort-{now.strftime('%Y%m%d-%H%M%S')}"
 
 @app.post("/synthetic-patients")
 async def create_generation_job(request: SyntheaRequest):
@@ -887,9 +1058,16 @@ async def create_generation_job(request: SyntheaRequest):
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
     
+    # Generate unique cohort name if auto-generation was requested
+    hapi_url = os.environ.get('HAPI_URL', 'http://hapi:8080/fhir')
+    request_data = request.model_dump()
+    if request_data["cohort_id"] == "auto":
+        request_data["cohort_id"] = generate_unique_cohort_name(hapi_url)
+        logger.info(f"Auto-generated cohort name: {request_data['cohort_id']}")
+    
     # Create job
     job_id = str(uuid.uuid4())
-    job = JobStatus(job_id, request.model_dump())
+    job = JobStatus(job_id, request_data)
     with jobs_lock:
         jobs[job_id] = job
     
@@ -911,8 +1089,8 @@ async def get_job_status(job_id: str):
     with jobs_lock:
         if job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
-        job = jobs[job_id]
-    return job.to_dict()
+        result = jobs[job_id].to_dict()
+    return result
 
 @app.get("/synthetic-patients/jobs")
 async def list_recent_jobs(limit: int = 50):
@@ -920,7 +1098,8 @@ async def list_recent_jobs(limit: int = 50):
     # Sort by creation time, newest first
     with jobs_lock:
         sorted_jobs = sorted(jobs.values(), key=lambda j: j.created_at, reverse=True)
-    return [job.to_dict() for job in sorted_jobs[:limit]]
+        result = [job.to_dict() for job in sorted_jobs[:limit]]
+    return result
 
 @app.delete("/synthetic-patients/jobs/{job_id}")
 async def cancel_job(job_id: str):
@@ -972,10 +1151,10 @@ async def process_generation_job(job_id: str):
         
         request_data = job.request_data
         
-        # Check HAPI server availability
+        # Check HAPI server availability (run in thread to avoid blocking event loop)
         hapi_url = "http://hapi:8080/fhir"
         try:
-            r = requests.get(hapi_url + "/$meta", timeout=10)
+            r = await asyncio.to_thread(requests.get, hapi_url + "/$meta", timeout=10)
             r.raise_for_status()
         except Exception as e:
             job.status = "failed"
@@ -1062,16 +1241,27 @@ async def process_generation_job(job_id: str):
             
             job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Uploading to HAPI"
             
-            # Upload chunk
+            # Build generation_settings for Patient-level tagging
+            generation_settings = {
+                "num_patients": request_data["num_patients"],
+                "num_years": request_data["num_years"],
+                "gender": request_data["gender"],
+                "min_age": request_data["min_age"],
+                "max_age": request_data["max_age"],
+                "state": request_data.get("state"),
+                "city": request_data.get("city")
+            }
+            
+            # Upload chunk with generation_settings for Patient tagging
             chunk_patient_ids = await upload_chunk_to_hapi(
-                output_dir, hapi_url, tagset, job_id, chunk["chunk_id"]
+                output_dir, hapi_url, tagset, job_id, chunk["chunk_id"], generation_settings
             )
             all_patient_ids.update(chunk_patient_ids)
             
-            # Update cohort with current patient set after each chunk
+            # Update cohort with current patient set after each chunk (no generation_settings - they're on patients now)
             job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Updating cohort"
             try:
-                upsert_group(hapi_url, request_data["cohort_id"], all_patient_ids, tagset)
+                await asyncio.to_thread(upsert_group, hapi_url, request_data["cohort_id"], all_patient_ids, tagset)
                 logger.info(f"Job {job_id}: Updated cohort with {len(all_patient_ids)} patients after chunk {chunk['chunk_id']}")
             except Exception as e:
                 logger.error(f"Job {job_id}: Failed to update cohort after chunk {chunk['chunk_id']}: {str(e)}")
@@ -1110,7 +1300,7 @@ async def process_generation_job(job_id: str):
         job.current_phase = "failed"
         logger.error(f"Job {job_id} failed: {str(e)}", exc_info=True)
 
-async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_id: str, chunk_id: int) -> Set[str]:
+async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_id: str, chunk_id: int, generation_settings: dict = None) -> Set[str]:
     """Upload a chunk's generated files to HAPI server"""
     # Get all JSON files
     special_files = sorted(glob.glob(os.path.join(output_dir, "practitionerInformation*.json"))) + \
@@ -1120,23 +1310,24 @@ async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_i
     
     patient_ids = set()
     
-    # Upload special files first (if any)
+    # Upload special files first (if any) - no generation_settings for these
+    # post_bundle uses synchronous requests, so run in thread to avoid blocking the event loop
     for json_file in special_files:
         try:
-            success, error_info, _ = post_bundle(json_file, hapi_url, tags=tags)
+            success, error_info, _ = await asyncio.to_thread(post_bundle, json_file, hapi_url, tags=tags)
             if not success:
                 logger.warning(f"Job {job_id} chunk {chunk_id}: Failed to upload {os.path.basename(json_file)}: {error_info}")
         except Exception as e:
             logger.warning(f"Job {job_id} chunk {chunk_id}: Error uploading {os.path.basename(json_file)}: {str(e)}")
-    
-    # Upload patient files with retry logic
+
+    # Upload patient files with retry logic - include generation_settings for Patient tagging
     max_retries = 3
     retry_delay = 2
-    
+
     for json_file in patient_files:
         for retry in range(max_retries):
             try:
-                success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tags)
+                success, error_info, new_patient_ids = await asyncio.to_thread(post_bundle, json_file, hapi_url, tags=tags, generation_settings=generation_settings)
                 if success and new_patient_ids:
                     patient_ids.update(new_patient_ids)
                     break  # Success
@@ -1284,7 +1475,9 @@ async def list_all_patients():
                     "gender": gender,
                     "ethnicity": ethnicity,
                     "birth_date": birth_date,
-                    "cohort_ids": cohort_ids
+                    "cohort_ids": cohort_ids,
+                    "pdf_url": f"/patient/{patient_id}/pdf",
+                    "fhir_url": f"/patient/{patient_id}/fhir"
                 }
                 
                 patient_list.append(patient_info)
@@ -1503,69 +1696,67 @@ async def get_module_content(module_name: str):
 @app.get("/list-all-cohorts", response_class=JSONResponse)
 async def list_all_cohorts():
     """ Lists all cohorts stored in the HAPI FHIR server along with the number of patients in each cohort and their source.
+    
+    Optimized version using async HTTP and server-side filtering.
+    
     Returns:
         A JSON object containing a list of cohorts with their IDs, patient counts, and sources.
     """
     hapi_url = "http://hapi:8080/fhir"
     
-    # Check if the HAPI server is running
-    try:
-        r = requests.get(hapi_url + "/$meta")
-        r.raise_for_status()
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable. (It may be starting up.)"})
+    # Check if the HAPI server is running (async)
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            r = await client.get(hapi_url + "/$meta")
+            r.raise_for_status()
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": "HAPI FHIR server is not reachable. (It may be starting up.)"})
     
-    # Fetch all groups from the HAPI server
-    all_groups = fetch_all_groups(hapi_url)
+    # Fetch cohort groups using optimized async function
+    all_groups = await fetch_cohort_groups_async(hapi_url)
     
     # Process the groups to extract cohort information
     cohorts = []
     for group in all_groups:
         # Extract cohort ID, source, and creation time from tags
+        # Note: generation_settings are now stored on Patient resources, not on Groups
         cohort_id = None
         source = None
         creation_time = None
         
-        # First check if this is a cohort by looking at the ID directly
         group_id = group.get("id")
         
         # Look for cohort information in tags
         if "meta" in group and "tag" in group["meta"]:
             for tag in group["meta"]["tag"]:
-                if tag.get("system") == "urn:charm:cohort":
-                    cohort_id = tag.get("code")
-                if tag.get("system") == "urn:charm:source":
-                    source = tag.get("code")
-                if tag.get("system") == "urn:charm:created":
-                    creation_time = tag.get("code")
+                system = tag.get("system", "")
+                code = tag.get("code")
+                if system == "urn:charm:cohort":
+                    cohort_id = code
+                elif system == "urn:charm:source":
+                    source = code
+                elif system == "urn:charm:created":
+                    creation_time = code
                 # Also check for datatype tag to identify synthetic cohorts
-                if tag.get("system") == "urn:charm:datatype" and tag.get("code") == "synthetic":
-                    # If we have a synthetic datatype but no cohort ID, use the group ID
+                elif system == "urn:charm:datatype" and code == "synthetic":
                     if not cohort_id and group_id:
                         cohort_id = group_id
-                        print(f"Using group ID {group_id} as cohort ID for synthetic cohort")
+                        logger.info(f"Using group ID {group_id} as cohort ID for synthetic cohort")
         
         # Skip if this is not a cohort group
         if not cohort_id:
             continue
         
         # Count the number of patients in the group
-        patient_count = 0
-        if "member" in group:
-            patient_count = len(group["member"])
+        patient_count = len(group.get("member", []))
         
         # Add cohort info to the list
         cohort_info = {
             "cohort_id": cohort_id,
             "patient_count": patient_count,
-            "source": source or "unknown"
+            "source": source or "unknown",
+            "created_at": creation_time or "unknown"
         }
-        
-        # Include creation time if available
-        if creation_time:
-            cohort_info["created_at"] = creation_time
-        else:
-            cohort_info["created_at"] = "unknown"
             
         cohorts.append(cohort_info)
     
@@ -1888,6 +2079,406 @@ async def count_patient_keys(cohort_id: str = None):
         "cohort_id": cohort_id if cohort_id else "all",
         "key_analysis": sorted_result
     }
+
+
+
+
+@app.get("/random-patient-full-data", response_class=JSONResponse)
+async def get_random_patient_full_data():
+    """
+    Get a random patient from the database with ALL their FHIR data.
+    This is useful for analyzing FHIR data structure and designing PDF output.
+    
+    Returns all resources for the patient including:
+    - Patient demographics
+    - Encounters (hospital stays, visits)
+    - Conditions (diagnoses)
+    - Observations (lab results, vitals)
+    - Procedures
+    - MedicationRequests
+    - Immunizations
+    - CarePlans
+    - DiagnosticReports
+    - DocumentReferences
+    """
+    hapi_url = os.environ.get('HAPI_URL', "http://hapi:8080/fhir")
+    
+    # Check if the HAPI server is running
+    try:
+        r = requests.get(f"{hapi_url}/$meta", timeout=5)
+        r.raise_for_status()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable: {str(e)}"})
+    
+    try:
+        # Fetch all patients
+        patients = fetch_all_patients(hapi_url)
+        
+        if not patients:
+            return JSONResponse(status_code=404, content={"error": "No patients found in the database"})
+        
+        # Select a random patient
+        selected_patient = random.choice(patients)
+        patient_id = selected_patient.get("id")
+        
+        if not patient_id:
+            return JSONResponse(status_code=500, content={"error": "Selected patient has no ID"})
+        
+        logger.info(f"Selected random patient: {patient_id}")
+        
+        # Use the $everything operation to get all resources for this patient
+        everything_url = f"{hapi_url}/Patient/{patient_id}/$everything"
+        logger.info(f"Fetching all data from: {everything_url}")
+        
+        all_resources = {"Patient": [], "Encounter": [], "Condition": [], "Observation": [], 
+                        "Procedure": [], "MedicationRequest": [], "MedicationAdministration": [],
+                        "Immunization": [], "CarePlan": [], "DiagnosticReport": [], 
+                        "DocumentReference": [], "Other": []}
+        
+        next_url = everything_url
+        while next_url:
+            r = requests.get(next_url, timeout=60)
+            if r.status_code != 200:
+                logger.error(f"Error fetching patient data: HTTP {r.status_code}")
+                break
+            
+            bundle = r.json()
+            
+            # Process entries
+            if "entry" in bundle:
+                for entry in bundle["entry"]:
+                    resource = entry.get("resource", {})
+                    resource_type = resource.get("resourceType", "Other")
+                    
+                    if resource_type in all_resources:
+                        all_resources[resource_type].append(resource)
+                    else:
+                        all_resources["Other"].append(resource)
+            
+            # Check for next page
+            next_url = None
+            for link in bundle.get("link", []):
+                if link.get("relation") == "next":
+                    next_url = link.get("url")
+                    break
+        
+        # Count resources
+        resource_counts = {k: len(v) for k, v in all_resources.items() if v}
+        
+        return {
+            "patient_id": patient_id,
+            "total_patients_in_db": len(patients),
+            "resource_counts": resource_counts,
+            "resources": all_resources
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting random patient: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": f"Error getting random patient: {str(e)}"})
+
+
+@app.get("/patient/{patient_id}/fhir", response_class=JSONResponse)
+async def get_patient_fhir(patient_id: str):
+    """
+    Get all FHIR data for a specific patient.
+    
+    Uses the $everything operation to fetch all resources related to the patient including:
+    - Patient demographics
+    - Encounters (hospital stays, visits)
+    - Conditions (diagnoses)
+    - Observations (lab results, vitals)
+    - Procedures
+    - MedicationRequests
+    - Immunizations
+    - CarePlans
+    - DiagnosticReports
+    - DocumentReferences
+    """
+    hapi_url = os.environ.get('HAPI_URL', "http://hapi:8080/fhir")
+    
+    try:
+        # Use the $everything operation to get all resources for this patient
+        everything_url = f"{hapi_url}/Patient/{patient_id}/$everything"
+        logger.info(f"Fetching all FHIR data for patient {patient_id} from: {everything_url}")
+        
+        all_resources = {"Patient": [], "Encounter": [], "Condition": [], "Observation": [], 
+                        "Procedure": [], "MedicationRequest": [], "MedicationAdministration": [],
+                        "Immunization": [], "CarePlan": [], "DiagnosticReport": [], 
+                        "DocumentReference": [], "Other": []}
+        
+        next_url = everything_url
+        while next_url:
+            r = requests.get(next_url, timeout=60)
+            if r.status_code == 404:
+                return JSONResponse(status_code=404, content={"error": f"Patient {patient_id} not found"})
+            if r.status_code != 200:
+                logger.error(f"Error fetching patient data: HTTP {r.status_code}")
+                return JSONResponse(status_code=r.status_code, content={"error": f"Error fetching patient data: HTTP {r.status_code}"})
+            
+            bundle = r.json()
+            
+            # Process entries
+            if "entry" in bundle:
+                for entry in bundle["entry"]:
+                    resource = entry.get("resource", {})
+                    resource_type = resource.get("resourceType", "Other")
+                    
+                    if resource_type in all_resources:
+                        all_resources[resource_type].append(resource)
+                    else:
+                        all_resources["Other"].append(resource)
+            
+            # Check for next page
+            next_url = None
+            for link in bundle.get("link", []):
+                if link.get("relation") == "next":
+                    next_url = link.get("url")
+                    break
+        
+        # Count resources
+        resource_counts = {k: len(v) for k, v in all_resources.items() if v}
+        
+        return {
+            "patient_id": patient_id,
+            "resource_counts": resource_counts,
+            "resources": all_resources
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting patient FHIR data: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": f"Error getting patient FHIR data: {str(e)}"})
+
+
+@app.get("/patient/{patient_id}/pdf")
+async def get_patient_pdf(patient_id: str):
+    """
+    Generate a PDF health summary for a specific patient.
+    
+    The PDF includes:
+    - Personal Information (name, gender, DOB, address, phone, marital status)
+    - Demographics (race, ethnicity, birth place, language)
+    - Diagnoses/Conditions (with status and onset date)
+    - Medications (with status and date)
+    - Procedures (with status and date)
+    - Healthcare Visits/Encounters (type, class, date, provider)
+    - Immunizations
+    - Recent Vital Signs
+    
+    Technical IDs, FHIR codes, and non-human-readable data are filtered out.
+    """
+    hapi_url = os.environ.get('HAPI_URL', "http://hapi:8080/fhir")
+    
+    # Check if the HAPI server is running
+    try:
+        r = requests.get(f"{hapi_url}/$meta", timeout=5)
+        r.raise_for_status()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable: {str(e)}"})
+    
+    try:
+        # Use the $everything operation to get all resources for this patient
+        everything_url = f"{hapi_url}/Patient/{patient_id}/$everything"
+        logger.info(f"Fetching all data for patient {patient_id}")
+        
+        all_resources = {"Patient": [], "Encounter": [], "Condition": [], "Observation": [], 
+                        "Procedure": [], "MedicationRequest": [], "MedicationAdministration": [],
+                        "Immunization": [], "CarePlan": [], "DiagnosticReport": [], 
+                        "DocumentReference": [], "Other": []}
+        
+        next_url = everything_url
+        while next_url:
+            r = requests.get(next_url, timeout=60)
+            if r.status_code == 404:
+                return JSONResponse(status_code=404, content={"error": f"Patient {patient_id} not found"})
+            if r.status_code != 200:
+                logger.error(f"Error fetching patient data: HTTP {r.status_code}")
+                break
+            
+            bundle = r.json()
+            
+            # Process entries
+            if "entry" in bundle:
+                for entry in bundle["entry"]:
+                    resource = entry.get("resource", {})
+                    resource_type = resource.get("resourceType", "Other")
+                    
+                    if resource_type in all_resources:
+                        all_resources[resource_type].append(resource)
+                    else:
+                        all_resources["Other"].append(resource)
+            
+            # Check for next page
+            next_url = None
+            for link in bundle.get("link", []):
+                if link.get("relation") == "next":
+                    next_url = link.get("url")
+                    break
+        
+        patient_data = {"resources": all_resources}
+        
+        # Extract human-readable info
+        patient_info = extract_patient_info_for_pdf(patient_data)
+        
+        # Generate PDF
+        pdf_bytes = generate_patient_pdf(patient_info, patient_id)
+        
+        # Get patient's records_timespan (num_years) from Patient resource tags
+        records_timespan = None
+        try:
+            # Look for the Patient resource in all_resources and check its meta tags
+            for patient_resource in all_resources.get("Patient", []):
+                if "meta" in patient_resource and "tag" in patient_resource["meta"]:
+                    for tag in patient_resource["meta"]["tag"]:
+                        if tag.get("system") == "urn:charm:setting:records_timespan":
+                            records_timespan = tag.get("code")
+                            break
+                if records_timespan:
+                    break
+        except Exception as e:
+            logger.warning(f"Could not fetch records_timespan from Patient {patient_id} tags: {e}")
+        
+        # Extract age as number from patient_info
+        age_str = patient_info.get("personal_info", {}).get("age", "")
+        age_num = ""
+        if age_str:
+            # Extract just the number from "XX years"
+            age_num = age_str.replace(" years", "").strip()
+        
+        # Build filename parts - no fallback, skip YearsOfData if not found in cohort
+        # Format: synthetic-patient-report-ID-$idnum-$ageYearsOld-$number_of_yearsYearsOfData
+        filename_parts = [f"synthetic-patient-report-ID-{patient_id}"]
+        if age_num:
+            filename_parts.append(f"{age_num}YearsOld")
+        if records_timespan:
+            filename_parts.append(f"{records_timespan}YearsOfData")
+        filename = "-".join(filename_parts) + ".pdf"
+        
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generating PDF for patient {patient_id}: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": f"Error generating PDF: {str(e)}"})
+
+
+@app.get("/random-patient/pdf")
+async def get_random_patient_pdf():
+    """
+    Generate a PDF health summary for a random patient from the database.
+    
+    This is useful for testing the PDF generation feature.
+    """
+    hapi_url = os.environ.get('HAPI_URL', "http://hapi:8080/fhir")
+    
+    # Check if the HAPI server is running
+    try:
+        r = requests.get(f"{hapi_url}/$meta", timeout=5)
+        r.raise_for_status()
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable: {str(e)}"})
+    
+    try:
+        # Fetch all patients
+        patients = fetch_all_patients(hapi_url)
+        
+        if not patients:
+            return JSONResponse(status_code=404, content={"error": "No patients found in the database"})
+        
+        # Select a random patient
+        selected_patient = random.choice(patients)
+        patient_id = selected_patient.get("id")
+        
+        if not patient_id:
+            return JSONResponse(status_code=500, content={"error": "Selected patient has no ID"})
+        
+        logger.info(f"Selected random patient for PDF: {patient_id}")
+        
+        # Use the $everything operation to get all resources for this patient
+        everything_url = f"{hapi_url}/Patient/{patient_id}/$everything"
+        
+        all_resources = {"Patient": [], "Encounter": [], "Condition": [], "Observation": [], 
+                        "Procedure": [], "MedicationRequest": [], "MedicationAdministration": [],
+                        "Immunization": [], "CarePlan": [], "DiagnosticReport": [], 
+                        "DocumentReference": [], "Other": []}
+        
+        next_url = everything_url
+        while next_url:
+            r = requests.get(next_url, timeout=60)
+            if r.status_code != 200:
+                logger.error(f"Error fetching patient data: HTTP {r.status_code}")
+                break
+            
+            bundle = r.json()
+            
+            # Process entries
+            if "entry" in bundle:
+                for entry in bundle["entry"]:
+                    resource = entry.get("resource", {})
+                    resource_type = resource.get("resourceType", "Other")
+                    
+                    if resource_type in all_resources:
+                        all_resources[resource_type].append(resource)
+                    else:
+                        all_resources["Other"].append(resource)
+            
+            # Check for next page
+            next_url = None
+            for link in bundle.get("link", []):
+                if link.get("relation") == "next":
+                    next_url = link.get("url")
+                    break
+        
+        patient_data = {"resources": all_resources}
+        
+        # Extract human-readable info
+        patient_info = extract_patient_info_for_pdf(patient_data)
+        
+        # Generate PDF
+        pdf_bytes = generate_patient_pdf(patient_info, patient_id)
+        
+        # Get patient's records_timespan (num_years) from Patient resource tags
+        records_timespan = None
+        try:
+            # Look for the Patient resource in all_resources and check its meta tags
+            for patient_resource in all_resources.get("Patient", []):
+                if "meta" in patient_resource and "tag" in patient_resource["meta"]:
+                    for tag in patient_resource["meta"]["tag"]:
+                        if tag.get("system") == "urn:charm:setting:records_timespan":
+                            records_timespan = tag.get("code")
+                            break
+                if records_timespan:
+                    break
+        except Exception as e:
+            logger.warning(f"Could not fetch records_timespan from Patient {patient_id} tags: {e}")
+        
+        # Extract age as number from patient_info
+        age_str = patient_info.get("personal_info", {}).get("age", "")
+        age_num = ""
+        if age_str:
+            # Extract just the number from "XX years"
+            age_num = age_str.replace(" years", "").strip()
+        
+        # Build filename parts - no fallback, skip YearsOfData if not found in cohort
+        # Format: synthetic-patient-report-ID-$idnum-$ageYearsOld-$number_of_yearsYearsOfData
+        filename_parts = [f"synthetic-patient-report-ID-{patient_id}"]
+        if age_num:
+            filename_parts.append(f"{age_num}YearsOld")
+        if records_timespan:
+            filename_parts.append(f"{records_timespan}YearsOfData")
+        filename = "-".join(filename_parts) + ".pdf"
+        
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+        
+    except Exception as e:
+        logger.error(f"Error generating random patient PDF: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": f"Error generating PDF: {str(e)}"})
 
 
 @app.delete("/delete-cohort/{cohort_id}", response_class=JSONResponse)
@@ -2251,6 +2842,233 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
             status_code=500,
             detail=f"Unexpected error: {str(e)}"
         )
+
+
+# =============================================================================
+# Synthetic Vitals Timeseries Endpoints (TimeAutoDiff)
+# =============================================================================
+
+class SinglePatientGenerateRequest(BaseModel):
+    """Request model for generating synthetic timeseries for a single patient."""
+    ethnicity: Optional[int] = Field(None, ge=0, le=3, description="0=White, 1=Black, 2=Asian, 3=Other")
+    gender: Optional[int] = Field(None, ge=0, le=1, description="0=Female, 1=Male")
+    age_group: Optional[int] = Field(None, ge=0, le=3, description="0=0-30, 1=30-50, 2=50-70, 3=70-100")
+    mortality_label: Optional[int] = Field(None, ge=0, le=1, description="0=Survived, 1=Died")
+
+
+@app.get("/synthetic-vitals-timeseries/model-information")
+def timeseries_model_information():
+    """Get detailed information about the TimeAutoDiff synthetic timeseries model."""
+    try:
+        return get_timeseries_model_info()
+    except Exception as e:
+        logger.error(f"Error getting timeseries model info: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/synthetic-vitals-timeseries/generate-raw-1-patient")
+def timeseries_generate_single_patient(req: SinglePatientGenerateRequest):
+    """
+    Generate synthetic ICU timeseries data for a single patient using TimeAutoDiff.
+    
+    ## Output Features (10 vital signs over 25 hourly timesteps)
+    
+    Based on MIMIC-III/IV ICU data definitions:
+    
+    | Feature | Full Name | Unit | Description |
+    |---------|-----------|------|-------------|
+    | fio2 | Fraction of Inspired Oxygen | % (0-100) | Oxygen concentration delivered to patient |
+    | map | Mean Arterial Pressure | mmHg | Average arterial pressure during cardiac cycle |
+    | dbp | Diastolic Blood Pressure | mmHg | Arterial pressure during heart relaxation |
+    | o2sat | Oxygen Saturation (SpO2) | % (0-100) | Peripheral oxygen saturation |
+    | hr | Heart Rate | bpm | Beats per minute |
+    | temp | Temperature | °C | Body temperature |
+    | resp | Respiratory Rate | breaths/min | Breathing rate |
+    | sbp | Systolic Blood Pressure | mmHg | Arterial pressure during heart contraction |
+    | ph | Blood pH | pH units | Arterial blood acidity/alkalinity (normal: 7.35-7.45) |
+    | lymph | Lymphocyte Count | % or K/uL | White blood cell differential |
+    
+    ## Conditioning Parameters
+    
+    Control the characteristics of the generated patient:
+    
+    **ethnicity** (integer 0-3):
+    - 0 = White
+    - 1 = Black/African American
+    - 2 = Asian
+    - 3 = Other/Unknown
+    
+    **gender** (integer 0-1):
+    - 0 = Female
+    - 1 = Male
+    
+    **age_group** (integer 0-3):
+    - 0 = 0-30 years
+    - 1 = 30-50 years
+    - 2 = 50-70 years
+    - 3 = 70-100 years
+    
+    **mortality_label** (integer 0-1):
+    - 0 = Survived ICU stay
+    - 1 = Died during ICU stay
+    
+    If conditioning values are not provided, random values are sampled.
+    """
+    try:
+        # Generate for single patient
+        result = generate_synthetic_timeseries(
+            n_samples=1,
+            ethnicity=[req.ethnicity] if req.ethnicity is not None else None,
+            gender=[req.gender] if req.gender is not None else None,
+            age_group=[req.age_group] if req.age_group is not None else None,
+            mortality_label=[req.mortality_label] if req.mortality_label is not None else None,
+        )
+        
+        # Restructure output as single patient JSON
+        feature_names = result.get('feature_names', [])
+        synthetic_data = result.get('synthetic_data', [[]])[0]  # Get first (only) patient
+        
+        # Build structured timeseries with feature names
+        timeseries = []
+        for timestep_idx, timestep_values in enumerate(synthetic_data):
+            timestep_data = {'timestep': timestep_idx}
+            for feat_idx, feat_name in enumerate(feature_names):
+                if feat_idx < len(timestep_values):
+                    timestep_data[feat_name] = timestep_values[feat_idx]
+            timeseries.append(timestep_data)
+        
+        return {
+            'patient': {
+                'ethnicity': result['conditioning']['ethnicity'][0],
+                'gender': result['conditioning']['gender'][0],
+                'age_group': result['conditioning']['age_group'][0],
+                'mortality_label': result['conditioning']['mortality_label'][0],
+            },
+            'timeseries': timeseries,
+            'metadata': {
+                'seq_len': result.get('seq_len', 25),
+                'n_features': result.get('n_features', 10),
+                'feature_names': feature_names,
+            }
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"TimeAutoDiff package not available: {e}"
+        )
+    except Exception as e:
+        logger.error(f"Error generating synthetic timeseries: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/synthetic-vitals-timeseries/generate-visualization-1-patient")
+def timeseries_visualize(
+    ethnicity: Optional[int] = None,
+    gender: Optional[int] = None,
+    age_group: Optional[int] = None,
+    mortality_label: Optional[int] = None,
+):
+    """
+    Generate and visualize synthetic ICU timeseries as an interactive HTML page.
+    
+    Returns an interactive Plotly visualization with 10 stacked subplots showing
+    all vital signs over 25 hourly timesteps. Hover over any point to see details.
+    
+    ## Conditioning Parameters (all optional, random if not specified)
+    
+    - **ethnicity**: 0=White, 1=Black, 2=Asian, 3=Other
+    - **gender**: 0=Female, 1=Male
+    - **age_group**: 0=0-30, 1=30-50, 2=50-70, 3=70-100
+    - **mortality_label**: 0=Survived, 1=Died
+    """
+    from fastapi.responses import HTMLResponse
+    from timeseries import generate_timeseries_visualization
+    
+    try:
+        html = generate_timeseries_visualization(
+            ethnicity=ethnicity,
+            gender=gender,
+            age_group=age_group,
+            mortality_label=mortality_label,
+        )
+        return HTMLResponse(content=html)
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Visualization dependencies not available: {e}"
+        )
+    except Exception as e:
+        logger.error(f"Error generating timeseries visualization: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/synthetic-vitals-timeseries/generate-raw-n-patients")
+def timeseries_generate_n_patients(n_patients: int = 10):
+    """
+    Generate synthetic ICU timeseries data for multiple patients with random conditioning.
+    
+    All conditioning features (ethnicity, gender, age_group, mortality_label) are 
+    randomly sampled for each patient.
+    
+    ## Parameters
+    
+    - **n_patients**: Number of synthetic patients to generate (default: 10)
+    
+    ## Output
+    
+    Returns an array of patient objects, each containing:
+    - Patient demographics (randomly assigned)
+    - 25-hour timeseries of 10 vital signs
+    """
+    from timeseries import generate_synthetic_timeseries
+    
+    try:
+        result = generate_synthetic_timeseries(n_samples=n_patients)
+        
+        feature_names = result.get('feature_names', [])
+        synthetic_data = result.get('synthetic_data', [])
+        conditioning = result.get('conditioning', {})
+        
+        patients = []
+        for patient_idx in range(n_patients):
+            patient_data = synthetic_data[patient_idx] if patient_idx < len(synthetic_data) else []
+            
+            timeseries = []
+            for timestep_idx, timestep_values in enumerate(patient_data):
+                timestep_data = {'timestep': timestep_idx}
+                for feat_idx, feat_name in enumerate(feature_names):
+                    if feat_idx < len(timestep_values):
+                        timestep_data[feat_name] = timestep_values[feat_idx]
+                timeseries.append(timestep_data)
+            
+            patients.append({
+                'patient_index': patient_idx,
+                'demographics': {
+                    'gender': conditioning['gender'][patient_idx] if patient_idx < len(conditioning.get('gender', [])) else None,
+                    'ethnicity': conditioning['ethnicity'][patient_idx] if patient_idx < len(conditioning.get('ethnicity', [])) else None,
+                    'age_group': conditioning['age_group'][patient_idx] if patient_idx < len(conditioning.get('age_group', [])) else None,
+                    'mortality_label': conditioning['mortality_label'][patient_idx] if patient_idx < len(conditioning.get('mortality_label', [])) else None,
+                },
+                'timeseries': timeseries,
+            })
+        
+        return {
+            'n_patients': n_patients,
+            'metadata': {
+                'seq_len': result.get('seq_len', 25),
+                'n_features': result.get('n_features', 10),
+                'feature_names': feature_names,
+            },
+            'patients': patients,
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"TimeAutoDiff package not available: {e}"
+        )
+    except Exception as e:
+        logger.error(f"Error generating synthetic timeseries batch: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
