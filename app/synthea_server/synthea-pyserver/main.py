@@ -1151,10 +1151,10 @@ async def process_generation_job(job_id: str):
         
         request_data = job.request_data
         
-        # Check HAPI server availability
+        # Check HAPI server availability (run in thread to avoid blocking event loop)
         hapi_url = "http://hapi:8080/fhir"
         try:
-            r = requests.get(hapi_url + "/$meta", timeout=10)
+            r = await asyncio.to_thread(requests.get, hapi_url + "/$meta", timeout=10)
             r.raise_for_status()
         except Exception as e:
             job.status = "failed"
@@ -1261,7 +1261,7 @@ async def process_generation_job(job_id: str):
             # Update cohort with current patient set after each chunk (no generation_settings - they're on patients now)
             job.current_phase = f"Chunk {chunk['chunk_id']}/{len(chunks)}: Updating cohort"
             try:
-                upsert_group(hapi_url, request_data["cohort_id"], all_patient_ids, tagset)
+                await asyncio.to_thread(upsert_group, hapi_url, request_data["cohort_id"], all_patient_ids, tagset)
                 logger.info(f"Job {job_id}: Updated cohort with {len(all_patient_ids)} patients after chunk {chunk['chunk_id']}")
             except Exception as e:
                 logger.error(f"Job {job_id}: Failed to update cohort after chunk {chunk['chunk_id']}: {str(e)}")
@@ -1311,22 +1311,23 @@ async def upload_chunk_to_hapi(output_dir: str, hapi_url: str, tags: dict, job_i
     patient_ids = set()
     
     # Upload special files first (if any) - no generation_settings for these
+    # post_bundle uses synchronous requests, so run in thread to avoid blocking the event loop
     for json_file in special_files:
         try:
-            success, error_info, _ = post_bundle(json_file, hapi_url, tags=tags)
+            success, error_info, _ = await asyncio.to_thread(post_bundle, json_file, hapi_url, tags=tags)
             if not success:
                 logger.warning(f"Job {job_id} chunk {chunk_id}: Failed to upload {os.path.basename(json_file)}: {error_info}")
         except Exception as e:
             logger.warning(f"Job {job_id} chunk {chunk_id}: Error uploading {os.path.basename(json_file)}: {str(e)}")
-    
+
     # Upload patient files with retry logic - include generation_settings for Patient tagging
     max_retries = 3
     retry_delay = 2
-    
+
     for json_file in patient_files:
         for retry in range(max_retries):
             try:
-                success, error_info, new_patient_ids = post_bundle(json_file, hapi_url, tags=tags, generation_settings=generation_settings)
+                success, error_info, new_patient_ids = await asyncio.to_thread(post_bundle, json_file, hapi_url, tags=tags, generation_settings=generation_settings)
                 if success and new_patient_ids:
                     patient_ids.update(new_patient_ids)
                     break  # Success
