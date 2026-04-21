@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:scholar.google.com)",
+      "WebFetch(domain:www.med.unc.edu)",
+      "WebFetch(domain:doi.org)",
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)"
+    ]
+  }
+}
