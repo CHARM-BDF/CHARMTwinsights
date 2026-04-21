@@ -1,0 +1,68 @@
+name: CI Model Validation
+
+on:
+  pull_request:
+    branches: [ci-checks, main-dev, main]
+  push:
+    branches: [ci-checks, main-dev, main]
+
+jobs:
+  synthetic-fhir-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run synthetic + FHIR + ingestion validation target
+        run: ./ci/run.sh synthetic-fhir-validation
+
+  model-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run model validation target
+        run: ./ci/run.sh model-validation
+
+  mcp-copd-workflow-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run MCP COPD workflow validation target
+        run: ./ci/run.sh mcp-copd-workflow-validation
+
+  timeseries-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run timeseries validation target
+        run: ./ci/run.sh timeseries-validation
+
+  pdf-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run PDF validation target
+        run: ./ci/run.sh pdf-validation
+
+  router-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run router validation target
+        run: ./ci/run.sh router-validation

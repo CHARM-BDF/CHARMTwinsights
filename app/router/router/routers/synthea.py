@@ -1,9 +1,11 @@
 from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Body, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
+from datetime import datetime
 import httpx
 import logging
+import re
 
 from ..config import settings  # expects settings.synthea_server_url
 
@@ -215,6 +217,23 @@ async def generate_download_synthetic_patients(
 
 # Pydantic model for async job requests
 class SyntheaAsyncRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "num_patients": 10,
+                "num_years": 1,
+                "cohort_id": "default",
+                "exporter": "fhir",
+                "min_age": 0,
+                "max_age": 140,
+                "gender": "both",
+                "state": "",
+                "city": "",
+                "use_population_sampling": True
+            }
+        }
+    )
+    
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
     cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
@@ -225,6 +244,41 @@ class SyntheaAsyncRequest(BaseModel):
     state: Optional[str] = Field(None, description="US state for patient generation")
     city: Optional[str] = Field(None, description="US city for patient generation (requires state)")
     use_population_sampling: bool = Field(True, description="Sample states by population if no state specified")
+    
+    @field_validator('state', 'city', mode='before')
+    @classmethod
+    def normalize_optional_strings(cls, v):
+        """Treat 'string' placeholder from Swagger UI as None"""
+        if v == "string" or v == "":
+            return None
+        return v
+    
+    @field_validator('cohort_id')
+    @classmethod
+    def validate_cohort_id(cls, v: str) -> str:
+        """Validate and generate cohort_id if not specified.
+        
+        If cohort_id is 'default' or empty, generates a unique ID in the format:
+        Cohort-DayName-Date-Timestamp (e.g., Cohort-Monday-20260218-072436)
+        """
+        # Generate dynamic ID if user didn't specify one
+        if v == "default" or v == "" or v == "string":
+            now = datetime.now()
+            day_name = now.strftime("%A")  # e.g., "Monday"
+            date_str = now.strftime("%Y%m%d")  # e.g., "20260218"
+            time_str = now.strftime("%H%M%S")  # e.g., "072436"
+            v = f"Cohort-{day_name}-{date_str}-{time_str}"
+        
+        # FHIR resource ID pattern: [A-Za-z0-9\-\.]{1,64}
+        fhir_id_pattern = r'^[A-Za-z0-9\-\.]{1,64}$'
+        
+        if not re.match(fhir_id_pattern, v):
+            raise ValueError(
+                f"cohort_id '{v}' is not a valid FHIR resource ID. "
+                f"Must contain only letters, numbers, hyphens, and periods, "
+                f"and be 1-64 characters long. Underscores are not allowed."
+            )
+        return v
 
 
 # New async job management endpoints
