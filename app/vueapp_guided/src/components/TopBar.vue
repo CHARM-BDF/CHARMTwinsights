@@ -2,7 +2,6 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div class="brand" @click="goHome" role="button" tabindex="0">
-        <span class="logo">🏥</span>
         <div class="brand-text">
           <div class="brand-name">CHARMTwinsights</div>
           <div class="brand-sub">Guided flow</div>
@@ -60,9 +59,6 @@ const activeFlow = computed(() => getFlow(store.currentFlow))
 }
 .brand:hover .brand-name {
   color: var(--accent);
-}
-.logo {
-  font-size: 1.8rem;
 }
 .brand-text {
   display: flex;
