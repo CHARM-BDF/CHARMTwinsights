@@ -405,26 +405,33 @@ def validate_datatype(datatype: str) -> tuple[bool, str]:
 
 
 def validate_fhir_bundle(bundle: dict) -> tuple[bool, str]:
-    """Basic validation of FHIR bundle structure
-    
+    """Basic structural validation of a FHIR Bundle.
+
+    Only checks shape — does not modify or convert input. HAPI is the
+    authoritative FHIR validator; we just ensure the input is a dict
+    with the right top-level fields before forwarding.
+
     Args:
         bundle: Dictionary representing a FHIR Bundle
-        
+
     Returns:
         Tuple of (is_valid, error_message)
     """
     if not isinstance(bundle, dict):
         return False, "Bundle must be a dictionary"
-    
+
     if bundle.get("resourceType") != "Bundle":
-        return False, f"Invalid resourceType: expected 'Bundle', got '{bundle.get('resourceType')}'"
-    
+        return False, (
+            f"Expected resourceType='Bundle', got "
+            f"resourceType={bundle.get('resourceType')!r}"
+        )
+
     if "entry" not in bundle or not isinstance(bundle.get("entry"), list):
         return False, "Bundle must contain an 'entry' array"
-    
+
     if len(bundle.get("entry", [])) == 0:
         return False, "Bundle must contain at least one entry"
-    
+
     return True, ""
 
 
@@ -2728,7 +2735,7 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
         is_valid_bundle, bundle_error = validate_fhir_bundle(request.bundle)
         if not is_valid_bundle:
             raise HTTPException(status_code=400, detail=bundle_error)
-        
+
         logger.info(f"Processing external FHIR bundle for cohort '{request.cohort_id}' with datatype '{request.datatype}'")
         
         # Prefix patient IDs to prevent conflicts
