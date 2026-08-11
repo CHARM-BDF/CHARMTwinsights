@@ -278,7 +278,9 @@
         <template v-else>
           <!-- ── two-sided comparison: subject vs rotating match ── -->
           <div class="comparator">
-            <!-- subject side -->
+            <!-- subject column (strip stays empty — aligns with the rotator) -->
+            <div class="cmp-col">
+            <div class="cmp-strip"></div>
             <div class="cmp-side">
               <div class="cmp-head">
                 <span class="mono cmp-id">{{ profile.id }}</span>
@@ -304,17 +306,19 @@
               </div>
             </div>
 
-            <!-- rotation control -->
-            <div class="cmp-mid">
+            </div>
+
+            <!-- match column: the rotator sits in the strip above the card -->
+            <div class="cmp-col">
+            <div class="cmp-strip rot-strip">
               <button class="ghost rot-btn" :disabled="run.results.matches.length < 2" @click="rotate(-1)">◀</button>
               <div class="rot-pos">
-                <div class="rot-count">#{{ compareIdx + 1 }}</div>
-                <div class="muted rot-total">of {{ run.results.matches.length }}</div>
+                <span class="rot-count">#{{ compareIdx + 1 }}</span>
+                <span class="muted rot-total">of {{ run.results.matches.length }}</span>
               </div>
               <button class="ghost rot-btn" :disabled="run.results.matches.length < 2" @click="rotate(1)">▶</button>
             </div>
 
-            <!-- match side -->
             <div class="cmp-side" v-if="currentMatch">
               <div class="cmp-head">
                 <span class="mono cmp-id">{{ currentMatch.patient_id }}</span>
@@ -365,12 +369,32 @@
                 </div>
               </template>
             </div>
+            </div>
           </div>
 
           <label class="cmp-toggle">
             <input type="checkbox" v-model="showAllAttrs" />
             Also compare attributes that were <em>not</em> selected for twinning
           </label>
+
+          <!-- ── attribute prevalence: candidates sharing each subject attribute ── -->
+          <details v-if="run.results.prevalence" class="prev-panel" open>
+            <summary>
+              Attribute prevalence — how many of the {{ run.results.prevalence.of }} candidates
+              share each subject attribute
+            </summary>
+            <div class="prev-grid">
+              <div v-for="grp in prevalenceGroups" :key="grp.key" class="prev-cat">
+                <div class="cmp-cat-title">{{ grp.title }}</div>
+                <div v-if="!grp.rows.length" class="muted cmp-none">(none)</div>
+                <div v-for="row in grp.rows" :key="row.label" class="prev-row" :class="{ crit: row.crit }">
+                  <span class="prev-label">{{ row.label }}</span>
+                  <div class="prev-bar"><div class="prev-fill" :style="{ width: prevPct(row.count) }"></div></div>
+                  <span class="prev-count">{{ row.count }}</span>
+                </div>
+              </div>
+            </div>
+          </details>
 
           <!-- ── compact ranked list (click a row to load it on the right side) ── -->
           <div
@@ -666,6 +690,30 @@ function rotate(dir) {
   const n = run.results?.matches?.length ?? 0
   if (!n) return
   compareIdx.value = (compareIdx.value + dir + n) % n
+}
+
+// ─── attribute prevalence (computed server-side over ALL candidates) ─────────
+const prevalenceGroups = computed(() => {
+  const pv = run.results?.prevalence
+  if (!pv) return []
+  const demoCrit = { gender: sel.gender, age: sel.age, ethnicity: sel.ethnicity }
+  return [
+    {
+      key: 'demographics',
+      title: 'Demographics',
+      rows: (pv.demographics ?? []).map((r) => ({ ...r, crit: !!demoCrit[r.key] })),
+    },
+    ...clinicalGroups.map((g) => ({
+      key: g.key,
+      title: g.title,
+      rows: (pv[g.key] ?? []).map((r) => ({ ...r, crit: !!sel[g.key][r.label] })),
+    })),
+  ]
+})
+
+function prevPct(n) {
+  const of = run.results?.prevalence?.of || 1
+  return Math.round((100 * n) / of) + '%'
 }
 
 async function fetchMatchProfile(pid, force = false) {
@@ -1140,10 +1188,23 @@ async function exportFhir(patientId) {
 /* ─── comparator ─── */
 .comparator {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 0.8rem;
   align-items: start;
   margin-bottom: 0.7rem;
+}
+.cmp-col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.cmp-strip {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
 }
 .cmp-side {
   border: 1px solid var(--border);
@@ -1247,17 +1308,10 @@ async function exportFhir(patientId) {
 .cmp-mark { font-weight: 700; }
 .cmp-none { font-size: 0.8rem; }
 
-.cmp-mid {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.4rem;
-  padding-top: 2.2rem;
-}
-.rot-btn { padding: 0.35rem 0.7rem; font-size: 1rem; }
-.rot-pos { text-align: center; line-height: 1.2; }
+.rot-btn { padding: 0.35rem 0.8rem; font-size: 1rem; }
+.rot-pos { display: flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
 .rot-count { font-weight: 700; }
-.rot-total { font-size: 0.75rem; }
+.rot-total { font-size: 0.8rem; }
 
 .cmp-toggle {
   display: flex;
@@ -1271,7 +1325,65 @@ async function exportFhir(patientId) {
 
 @media (max-width: 760px) {
   .comparator { grid-template-columns: 1fr; }
-  .cmp-mid { flex-direction: row; padding-top: 0; justify-content: center; }
+  /* stacked: no need for the empty alignment strip above the subject */
+  .cmp-col:first-child .cmp-strip { display: none; }
+}
+
+/* ─── attribute prevalence ─── */
+.prev-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 0.7rem 1rem;
+  margin-bottom: 1rem;
+}
+.prev-panel summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.prev-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 1rem 1.6rem;
+  margin-top: 0.9rem;
+}
+.prev-cat { min-width: 0; }
+.prev-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.22rem 0.45rem;
+  border-radius: 4px;
+  font-size: 0.84rem;
+}
+.prev-row.crit { background: #fdf2f8; box-shadow: inset 2px 0 0 #db2777; }
+.prev-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prev-bar {
+  width: 90px;
+  height: 6px;
+  flex-shrink: 0;
+  background: var(--surface-alt);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.prev-fill {
+  height: 100%;
+  background: #db2777;
+  border-radius: 3px;
+}
+.prev-count {
+  min-width: 30px;
+  text-align: right;
+  font-weight: 600;
+  font-size: 0.82rem;
 }
 
 /* ─── compact ranked list ─── */

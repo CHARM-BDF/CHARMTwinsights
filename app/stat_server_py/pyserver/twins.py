@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 COHORT_TAG_SYSTEM = "urn:charm:cohort"
 DATATYPE_TAG_SYSTEM = "urn:charm:datatype"
 
+# Clinical attribute categories and the resource types backing each.
+CLINICAL_CATEGORIES = {
+    "conditions": ["Condition"],
+    "medications": ["MedicationRequest", "MedicationStatement"],
+    "procedures": ["Procedure"],
+}
+
 # Weighting presets: relative weight per category. Only categories the caller
 # actually selected participate; weights are renormalized over those.
 WEIGHT_PRESETS = {
@@ -329,9 +336,9 @@ class TwinFinder:
             or req.demographics.ethnicity is not None
         )
         clinical = {
-            "conditions": (req.conditions, ["Condition"]),
-            "medications": (req.medications, ["MedicationRequest", "MedicationStatement"]),
-            "procedures": (req.procedures, ["Procedure"]),
+            "conditions": (req.conditions, CLINICAL_CATEGORIES["conditions"]),
+            "medications": (req.medications, CLINICAL_CATEGORIES["medications"]),
+            "procedures": (req.procedures, CLINICAL_CATEGORIES["procedures"]),
         }
         selected_clinical = {k: v for k, v in clinical.items() if v[0]}
         if not use_demo and not selected_clinical:
@@ -347,11 +354,13 @@ class TwinFinder:
 
         # Clinical features, fetched per resource type in bounded chunks of
         # candidate ids — deterministic and complete, unlike deep-paging the
-        # whole store (see _features_by_patient).
+        # whole store (see _features_by_patient). All categories are fetched
+        # (not just the selected ones): scoring uses the selected subset, and
+        # the attribute-prevalence block uses all of them.
         candidate_ids = list(candidates.keys())
         feature_sets: Dict[str, Dict[str, Set[str]]] = {}
         incomplete_features: List[str] = []
-        for category, (_items, resource_types) in selected_clinical.items():
+        for category, resource_types in CLINICAL_CATEGORIES.items():
             merged: Dict[str, Set[str]] = {}
             for rt in resource_types:
                 code_field = "medicationCodeableConcept" if rt.startswith("Medication") else "code"
@@ -398,6 +407,7 @@ class TwinFinder:
             "weighting": req.weighting,
             "total_candidates": len(candidates),
             "matches": matches[: req.top_k],
+            "prevalence": self._attribute_prevalence(req, candidates, feature_sets),
             "coverage": {
                 "patients_scanned": len(patients),
                 "patients_truncated": patients_truncated,
@@ -408,3 +418,47 @@ class TwinFinder:
                 ),
             },
         }
+
+    def _attribute_prevalence(self, req: TwinFindRequest, candidates: Dict[str, Dict],
+                              feature_sets: Dict[str, Dict[str, Set[str]]]):
+        """For every attribute of the subject, count how many candidates share
+        it. Uses the already-fetched candidate feature sets; returns None if
+        the subject's own profile cannot be loaded (prevalence is decoration,
+        not worth failing the search over)."""
+        try:
+            sp = self.subject_profile(req.subject_id)
+        except Exception as e:
+            logger.warning(f"Prevalence skipped — could not load subject profile: {e}")
+            return None
+
+        out: Dict[str, Any] = {"of": len(candidates)}
+
+        demo_rows = []
+        if sp.get("gender"):
+            n = sum(1 for p in candidates.values()
+                    if (p.get("gender") or "").lower() == sp["gender"].lower())
+            demo_rows.append({"label": f"gender = {sp['gender']}", "key": "gender", "count": n})
+        tol = req.demographics.age_tolerance if req.demographics else 10
+        if sp.get("age") is not None:
+            n = 0
+            for p in candidates.values():
+                a = age_from_birth_date(p.get("birthDate"))
+                if a is not None and abs(a - sp["age"]) <= tol:
+                    n += 1
+            demo_rows.append({"label": f"age within ±{tol} y of {sp['age']}", "key": "age", "count": n})
+        if sp.get("ethnicity"):
+            n = sum(1 for p in candidates.values()
+                    if (extract_ethnicity(p) or "").lower() == sp["ethnicity"].lower())
+            demo_rows.append({"label": f"ethnicity = {sp['ethnicity']}", "key": "ethnicity", "count": n})
+        out["demographics"] = demo_rows
+
+        for category in CLINICAL_CATEGORIES:
+            feats = feature_sets.get(category, {})
+            rows = []
+            for item in sp.get(category, []):
+                keys = {str(c) for c in item.get("codes", [])} | {normalize_label(item["label"])}
+                n = sum(1 for pid_keys in feats.values() if pid_keys & keys)
+                rows.append({"label": item["label"], "count": n})
+            rows.sort(key=lambda r: (-r["count"], r["label"].lower()))
+            out[category] = rows
+        return out

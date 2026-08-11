@@ -125,6 +125,27 @@ with patch.object(TwinFinder, "_fetch_paged", fake_fetch), patch.object(TwinFind
     out2 = TwinFinder("http://fake").find(req_pharma)
 check("pharma preset runs", out2["matches"][0]["patient_id"] == "twin-good")
 
+# ── prevalence block ─────────────────────────────────────────────────────────
+def fake_profile(self, pid):
+    return {"id": pid, "gender": "female", "age": 58, "ethnicity": None,
+            "cohort_ids": [], "datatype": None,
+            "conditions": [{"label": "Hypertension", "codes": ["38341003"]}],
+            "medications": [{"label": "Metformin", "codes": ["860975"]}],
+            "procedures": []}
+
+with patch.object(TwinFinder, "_fetch_paged", fake_fetch), \
+     patch.object(TwinFinder, "_fetch_search", fake_search), \
+     patch.object(TwinFinder, "subject_profile", fake_profile):
+    out3 = TwinFinder("http://fake").find(req)
+pv = out3["prevalence"]
+check("prevalence present", pv is not None and pv["of"] == 2, f"(pv={pv and pv['of']})")
+check("prevalence condition count",
+      pv["conditions"][0]["label"] == "Hypertension" and pv["conditions"][0]["count"] == 1,
+      f"(rows={pv['conditions']})")
+check("prevalence med count", pv["medications"][0]["count"] == 1)
+check("prevalence gender row", any(r["key"] == "gender" and r["count"] == 1 for r in pv["demographics"]))
+check("prevalence age row", any(r["key"] == "age" and r["count"] == 1 for r in pv["demographics"]))
+
 # error: nothing selected
 try:
     bad = TwinFindRequest(subject_id="x")
