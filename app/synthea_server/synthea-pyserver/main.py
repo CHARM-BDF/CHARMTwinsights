@@ -970,7 +970,7 @@ class SyntheaRequest(BaseModel):
     
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
-    cohort_id: str = Field("default", description="Cohort identifier. Use 'default' for auto-generated name (Cohort-No-X), or specify a custom FHIR-valid ID")
+    cohort_id: str = Field("default", description="Cohort identifier. 'auto', 'default', or blank all request a server-assigned sequential name (Cohort-No-X); anything else is used as-is and must be a valid FHIR resource ID")
     exporter: str = Field("fhir", description="Export format: 'fhir' or 'csv'")
     min_age: int = Field(0, ge=0, le=140, description="Minimum patient age")
     max_age: int = Field(140, ge=0, le=140, description="Maximum patient age")
@@ -990,10 +990,12 @@ class SyntheaRequest(BaseModel):
     @field_validator('cohort_id')
     @classmethod
     def validate_cohort_id(cls, v: str) -> str:
-        """Validate cohort_id format. 
-        
-        If cohort_id is 'default' or empty, it will be replaced with a unique
-        Cohort-No-X name in create_generation_job after checking existing cohorts.
+        """Validate cohort_id format.
+
+        'default', empty, and the Swagger placeholder 'string' are normalized to
+        the 'auto' sentinel here; create_generation_job then replaces 'auto' with
+        a unique Cohort-No-X name after checking existing cohorts. (Consequence:
+        a cohort can never be literally named 'auto', 'default', or 'string'.)
         """
         # Mark for auto-generation - actual name will be set in create_generation_job
         if v == "default" or v == "" or v == "string":
@@ -1065,10 +1067,13 @@ async def create_generation_job(request: SyntheaRequest):
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
     
-    # Generate unique cohort name if auto-generation was requested
+    # Generate unique cohort name if auto-generation was requested. The field
+    # validator already folds 'default'/''/'string' into 'auto'; matching the
+    # raw sentinels here too keeps this correct even for callers that build
+    # request_data without going through SyntheaRequest validation.
     hapi_url = os.environ.get('HAPI_URL', 'http://hapi:8080/fhir')
     request_data = request.model_dump()
-    if request_data["cohort_id"] == "auto":
+    if request_data["cohort_id"] in ("auto", "default", "", None):
         request_data["cohort_id"] = generate_unique_cohort_name(hapi_url)
         logger.info(f"Auto-generated cohort name: {request_data['cohort_id']}")
     

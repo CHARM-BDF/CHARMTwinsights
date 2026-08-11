@@ -236,7 +236,7 @@ class SyntheaAsyncRequest(BaseModel):
     
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
-    cohort_id: str = Field("default", description="Cohort identifier (must be valid FHIR resource ID)")
+    cohort_id: str = Field("default", description="Cohort identifier (must be a valid FHIR resource ID). 'default' or blank: the router assigns Cohort-DayName-Date-Time. 'auto': passed through so the synthea server assigns a sequential Cohort-No-X name")
     exporter: str = Field("fhir", description="Export format: 'fhir' or 'csv'")
     min_age: int = Field(0, ge=0, le=140, description="Minimum patient age")
     max_age: int = Field(140, ge=0, le=140, description="Maximum patient age")
