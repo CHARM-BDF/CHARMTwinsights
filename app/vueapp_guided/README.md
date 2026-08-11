@@ -18,7 +18,7 @@ Shell, wizard framework, and several fully wired flows. Per flow:
 | Generate synthetic ICU vitals (TimeAutoDiff) | ✅ wired (single + batch, client-side charts) |
 | Browse & register models | 🔴 mockup — backend endpoints exist, wiring pending |
 | Apply a model to a cohort | 🔴 mockup — needs feature-mapping + batch-predict backend |
-| Find digital twins | 🔴 mockup — needs a `/twins/find` backend endpoint |
+| Find digital twins | ✅ wired — subject picker, attribute checkboxes, search existing data via `POST /twins/find`, or generate a candidate cohort first |
 | AI assistant (MCP console) | 🚧 **future work** — placeholder only, needs an LLM↔MCP bridge |
 
 ## Run locally

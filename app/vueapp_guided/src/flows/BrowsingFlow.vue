@@ -507,8 +507,10 @@ async function openPatient(patient) {
   patientTab.value      = 'records'
   recordsTab.value      = 'conditions'
   try {
+    // _count=1000: HAPI pages $everything at 20 entries by default, which
+    // silently truncates the record view for any realistic patient.
     const { data: bundle } = await axios.get(
-      `${store.apiBase}/stats/patients/${patient.id}/$everything`
+      `${store.apiBase}/stats/patients/${patient.id}/$everything?_count=1000`
     )
     parsedBundle.value = parseBundle(bundle)
   } catch (e) {
@@ -599,7 +601,7 @@ async function exportFhir(patientId) {
   fhirExporting[patientId] = true
   try {
     const { data: bundle } = await axios.get(
-      `${store.apiBase}/stats/patients/${patientId}/$everything`,
+      `${store.apiBase}/stats/patients/${patientId}/$everything?_count=1000`,
     )
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
     const url  = URL.createObjectURL(blob)

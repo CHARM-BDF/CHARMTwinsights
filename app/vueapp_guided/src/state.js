@@ -90,7 +90,7 @@ export const FLOWS = [
   {
     id: 'twins',
     title: 'Find digital twins',
-    subtitle: 'Similarity-ranked search by diagnosis, medication, or a seed patient',
+    subtitle: 'Pick a subject and matching attributes — search existing cohorts or generate candidates',
     icon: '👯',
     accent: '#db2777',
     category: 'Digital twins',

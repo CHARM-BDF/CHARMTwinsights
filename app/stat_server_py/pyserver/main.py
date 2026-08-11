@@ -766,6 +766,9 @@ async def get_conditions(
 # Import the FHIR utilities
 from .fhir_utils import FHIRResourceProcessor
 
+# Digital twin finder
+from .twins import TwinFinder, TwinFindRequest
+
 # Create a FHIR resource processor instance
 fhir_processor = None
 
@@ -773,6 +776,49 @@ fhir_processor = None
 async def startup_event():
     global fhir_processor
     fhir_processor = FHIRResourceProcessor(settings.hapi_url)
+
+
+@app.get("/twins/profile/{patient_id}", response_class=JSONResponse)
+async def get_twin_subject_profile(patient_id: str):
+    """
+    Attribute profile of one patient for the digital twin UI: demographics plus
+    deduplicated {label, codes} lists for conditions, medications, procedures.
+    Complete even for long-history patients ($everything pagination-safe).
+    """
+    try:
+        finder = TwinFinder(settings.hapi_url)
+        return finder.subject_profile(patient_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during profile fetch: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error building twin profile: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Profile fetch failed: {str(e)}")
+
+
+@app.post("/twins/find", response_class=JSONResponse)
+async def find_digital_twins(request: TwinFindRequest):
+    """
+    Similarity-ranked digital twin search.
+
+    Scores patients against the selected attributes of a subject (demographics,
+    conditions, medications, procedures) and returns the top-k matches with
+    per-category subscores plus matched/missing attribute lists. Optionally
+    restricted to one cohort via its urn:charm:cohort tag.
+    """
+    try:
+        finder = TwinFinder(settings.hapi_url)
+        return finder.find(request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during twin search: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error during twin search: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Twin search failed: {str(e)}")
 
 @app.get("/list-all-patient-conditions", response_class=JSONResponse)
 async def list_all_patient_conditions():
