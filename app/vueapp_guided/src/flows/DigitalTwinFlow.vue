@@ -174,7 +174,8 @@ const mockMatches = [
   { id: 'abc-309', name: 'Patient 309', gender: 'F', age: 63, source: 'synthetic', score: 0.72 },
 ]
 
-const data = reactive({
+// Reuse previously entered values if the user left and came back.
+const data = store.flowData.twins ?? reactive({
   seedMode: 'manual',
   seedPatientId: '',
   profile: {
@@ -209,7 +210,7 @@ function onFinish() {
 <style scoped>
 .seed-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1rem;
   margin-top: 0.5rem;
 }

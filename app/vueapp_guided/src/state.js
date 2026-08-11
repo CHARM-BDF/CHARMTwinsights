@@ -6,7 +6,7 @@ import { reactive } from 'vue'
 
 export const store = reactive({
   // Which flow is active. null = landing page.
-  // One of: 'synthea', 'vitals', 'browse', 'ingest', 'twins', 'models', 'agent'
+  // One of: 'synthea', 'vitals', 'browse', 'ingest', 'twins', 'models', 'apply', 'agent'
   currentFlow: null,
 
   // Current step index within the active flow (0-based).
@@ -22,9 +22,8 @@ export const store = reactive({
 export function startFlow(flowId) {
   store.currentFlow = flowId
   store.currentStep = 0
-  if (!store.flowData[flowId]) {
-    store.flowData[flowId] = {}
-  }
+  // Each flow hydrates store.flowData[flowId] itself on mount, so inputs
+  // survive leaving and re-entering a flow within a session.
 }
 
 export function goHome() {
@@ -92,7 +91,7 @@ export const FLOWS = [
     id: 'twins',
     title: 'Find digital twins',
     subtitle: 'Similarity-ranked search by diagnosis, medication, or a seed patient',
-    icon: '�',
+    icon: '👯',
     accent: '#db2777',
     category: 'Digital twins',
   },
@@ -119,6 +118,7 @@ export const FLOWS = [
     icon: '💬',
     accent: '#4f46e5',
     category: 'Assistance',
+    badge: 'Future work',
   },
 ]
 

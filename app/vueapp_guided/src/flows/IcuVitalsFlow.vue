@@ -154,6 +154,10 @@
           <button class="ghost small-btn" @click="downloadSingle" :disabled="!singleRawResult">⬇ Download JSON</button>
           <button class="ghost small-btn" @click="regenerate">↺ Regenerate</button>
         </div>
+        <p class="muted" style="font-size:0.82rem; margin:0">
+          Note: the chart and the downloaded JSON are two independent samples from the
+          model — the JSON is not the exact series shown above.
+        </p>
       </div>
 
       <!-- ── BATCH: summary + download ── -->
@@ -258,7 +262,8 @@ import Wizard from '../components/Wizard.vue'
 import { store } from '../state.js'
 
 // ---------- form data ----------
-const data = reactive({
+// Reuse previously entered values if the user left and came back.
+const data = store.flowData.vitals ?? reactive({
   mode: 'single',
   ethnicity: null,
   gender: null,
@@ -527,7 +532,7 @@ onBeforeUnmount(destroyChart)
 <style scoped>
 .mode-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1rem;
   margin-top: 0.5rem;
 }

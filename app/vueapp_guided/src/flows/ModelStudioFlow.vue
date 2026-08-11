@@ -181,7 +181,8 @@ const mockModels = [
   },
 ]
 
-const data = reactive({
+// Reuse previously entered values if the user left and came back.
+const data = store.flowData.models ?? reactive({
   mode: 'browse',
   expandedModel: null,
   reg: {

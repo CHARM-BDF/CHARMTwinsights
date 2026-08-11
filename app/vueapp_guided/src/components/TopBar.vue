@@ -15,7 +15,7 @@
           <span class="crumb-icon" :style="{ color: activeFlow.accent }">
             {{ activeFlow.icon }}
           </span>
-          {{ activeFlow.title }}
+          <span class="crumb-text">{{ activeFlow.title }}</span>
         </span>
       </nav>
 
@@ -94,6 +94,11 @@ const activeFlow = computed(() => getFlow(store.currentFlow))
   gap: 0.4rem;
   font-weight: 500;
   color: var(--text);
+  min-width: 0;
+}
+/* Ellipsis must live on the text span itself — text-overflow on the flex
+   container silently drops the text node instead of truncating it. */
+.crumb-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

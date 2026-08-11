@@ -60,14 +60,14 @@
           <input
             ref="fileInput"
             type="file"
-            accept=".json,.ndjson,application/json,application/fhir+json"
+            accept=".json,application/json,application/fhir+json"
             style="display: none"
             @change="onFileChange"
           />
           <div v-if="!data.fileName" class="dropzone-empty">
             <div class="dropzone-icon">📁</div>
             <div><strong>Drag a FHIR bundle here</strong> or click to browse</div>
-            <div class="muted">Accepts <code>.json</code> / <code>.ndjson</code></div>
+            <div class="muted">Accepts <code>.json</code> (a single FHIR Bundle)</div>
           </div>
           <div v-else class="dropzone-filled">
             <div class="file-row">
@@ -213,7 +213,9 @@ function defaultCohortId() {
   )
 }
 
-const data = reactive({
+// Reuse previously entered values (including a pasted bundle) if the user
+// left and came back; otherwise start fresh.
+const data = store.flowData.ingest ?? reactive({
   source: 'paste', // 'paste' | 'upload'
   bundleText: '',
   fileName: '',

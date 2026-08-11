@@ -20,9 +20,10 @@
         </div>
       </div>
 
-      <div class="stub-banner" style="align-self: flex-start">Stub</div>
+      <div class="stub-banner" style="align-self: flex-start">Future work</div>
       <p class="muted" style="margin: 0.5rem 0 0.8rem">
-        This panel will wrap the MCP server at port 8006. No LLM wired up yet.
+        This panel is a placeholder. A future iteration will bridge an LLM to the MCP
+        server (port 8006) so the assistant can search patients and run models.
       </p>
 
       <form class="chat-input" @submit.prevent="send">

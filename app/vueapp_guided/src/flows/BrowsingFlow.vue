@@ -171,7 +171,6 @@
             <div v-if="deleteState === 'loading'" class="state-msg">
               <span class="spinner"></span> Deleting…
             </div>
-            <div v-if="deleteState === 'done'" class="alert-ok">✓ Cohort deleted.</div>
             <div v-if="deleteState === 'error'" class="alert-err">✗ {{ deleteError }}</div>
           </div>
         </details>
@@ -374,10 +373,11 @@
 import { reactive, ref, computed, watch, onMounted } from 'vue'
 import axios from 'axios'
 import Wizard from '../components/Wizard.vue'
-import { store, goHome, nextStep } from '../state.js'
+import { store, goHome, nextStep, goToStep } from '../state.js'
 
 // ─── reactive data ───────────────────────────────────────────────────────────
-const data = reactive({
+// Reuse the previous selection if the user left and came back.
+const data = store.flowData.browse ?? reactive({
   cohortId: '',
   section: 'analytics', // 'analytics' | 'patients'
   tab: 'conditions',
@@ -460,10 +460,9 @@ async function loadPatients() {
   }
 }
 
-// Load patients as soon as a cohort is selected
-watch(() => data.cohortId, (id) => {
-  if (id) loadPatients()
-})
+// (Cohort-change side effects — loading patients, clearing stale detail state —
+// live in a single watch near the step gating at the bottom of this script,
+// after everything it touches has been declared.)
 
 // Patient search
 const patientSearch = ref('')
@@ -651,12 +650,13 @@ async function deleteCohort() {
   deleteState.value = 'loading'
   try {
     await axios.delete(`${store.apiBase}/synthetic/synthea/delete-cohort/${data.cohortId}`)
-    deleteState.value = 'done'
-    // Refresh cohort list and clear selection
+    // Refresh the list, clear the (now dangling) selection, and return to the
+    // cohort picker — staying on the detail step of a deleted cohort is a trap.
     await loadCohorts()
     data.cohortId = ''
     patientsFetched = false
     allPatients.value = []
+    goToStep(0)
   } catch (e) {
     deleteError.value = e?.response?.data?.detail ?? e.message ?? 'Delete failed'
     deleteState.value = 'error'
@@ -669,8 +669,18 @@ const steps = reactive([
   { label: 'Browse',      canAdvance: true },
 ])
 
+// Single cohort-change watch: gates the stepper, loads patients (also on mount,
+// when a restored selection means the initial value is already set), and clears
+// state left over from a previously viewed cohort.
 watch(() => data.cohortId, (id) => {
   steps[0].canAdvance = !!id
+  selectedPatient.value = null
+  parsedBundle.value = null
+  bundleError.value = ''
+  confirmDelete.value = false
+  deleteState.value = 'idle'
+  deleteError.value = ''
+  if (id) loadPatients()
 }, { immediate: true })
 
 function onFinish() {

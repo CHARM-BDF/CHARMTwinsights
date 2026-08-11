@@ -20,7 +20,10 @@
         >
           <div class="tile-icon">{{ flow.icon }}</div>
           <div class="tile-content">
-            <div class="tile-title">{{ flow.title }}</div>
+            <div class="tile-title">
+              {{ flow.title }}
+              <span v-if="flow.badge" class="tile-badge">{{ flow.badge }}</span>
+            </div>
             <div class="tile-sub">{{ flow.subtitle }}</div>
           </div>
           <div class="tile-arrow">→</div>
@@ -141,6 +144,22 @@ function pick(id) {
   font-size: 1rem;
   color: var(--text);
   margin-bottom: 0.15rem;
+}
+
+.tile-badge {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.3rem;
+  padding: 0.08rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
 }
 
 .tile-sub {

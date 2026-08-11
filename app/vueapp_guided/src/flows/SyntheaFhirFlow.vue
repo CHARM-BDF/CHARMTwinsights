@@ -208,7 +208,9 @@ function defaultCohortId() {
   )
 }
 
-const data = reactive({
+// Reuse previously entered values if the user left and came back; otherwise
+// start fresh and register the new object in the shared store.
+const data = store.flowData.synthea ?? reactive({
   numPatients: 50,
   numYears: 5,
   minAge: 0,
@@ -335,7 +337,11 @@ async function onFinish() {
     const payload = {
       num_patients: data.numPatients,
       num_years: data.numYears,
-      cohort_id: data.cohortId || 'default',
+      // 'auto' passes through the router untouched and makes the synthea
+      // server assign a sequential Cohort-No-X name — matching the "sequential
+      // name" promise in the help text. ('default'/blank would auto-name too,
+      // but with the router's timestamp format instead.)
+      cohort_id: data.cohortId || 'auto',
       exporter: data.exporter,
       min_age: data.minAge,
       max_age: data.maxAge,

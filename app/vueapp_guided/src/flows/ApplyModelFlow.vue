@@ -249,7 +249,8 @@ const mockResults = [
   { patient: 'abc-004', inputPreview: 'M, 71, BMI 28, T2D=0', value: '0.56', label: 'moderate 5y hazard' },
 ]
 
-const data = reactive({
+// Reuse previously entered values if the user left and came back.
+const data = store.flowData.apply ?? reactive({
   modelImage: '',
   targetType: 'cohort',
   cohortId: '',
