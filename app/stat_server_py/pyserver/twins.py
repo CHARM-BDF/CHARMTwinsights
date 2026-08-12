@@ -13,6 +13,9 @@ data (same codes, possibly different text) both match.
 
 import logging
 import re
+import threading
+import time
+from collections import Counter
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Set
 
@@ -67,6 +70,27 @@ class TwinFindRequest(BaseModel):
     top_k: int = Field(20, gt=0, le=500)
     weighting: str = Field("balanced", description="One of: " + ", ".join(WEIGHT_PRESETS))
     max_candidates: int = Field(2000, gt=0, le=10000, description="Safety cap on patients scanned")
+
+
+class AttributeCountsRequest(BaseModel):
+    """Ask how many patients in the store share each of the subject's
+    attributes — served from the store-wide count cache."""
+    subject_id: str
+    demographics: Optional[TwinDemographics] = None
+    conditions: List[TwinCriteriaItem] = Field(default_factory=list)
+    medications: List[TwinCriteriaItem] = Field(default_factory=list)
+    procedures: List[TwinCriteriaItem] = Field(default_factory=list)
+
+
+# ─── store-wide attribute-count cache ─────────────────────────────────────────
+# One full chunked sweep of the store (~seconds to ~a minute, same fetch path
+# the twin search uses) yields patient-level counts for EVERY attribute key at
+# once. Cached per HAPI url with stale-while-revalidate: requests are served
+# from the last build instantly, and a rebuild is kicked off in the background
+# when the cache ages out or the store's patient count changes.
+_COUNT_CACHE_LOCK = threading.Lock()
+_COUNT_CACHES: Dict[str, Dict[str, Any]] = {}  # hapi_url -> {"building": bool, "data": {...}}
+COUNT_CACHE_TTL_SECONDS = 600
 
 
 # ─── helpers ──────────────────────────────────────────────────────────────────
@@ -462,3 +486,149 @@ class TwinFinder:
             rows.sort(key=lambda r: (-r["count"], r["label"].lower()))
             out[category] = rows
         return out
+
+    # -- store-wide attribute counts (cached) ---------------------------------
+
+    def attribute_counts(self, req: AttributeCountsRequest) -> Dict[str, Any]:
+        """Counts of patients sharing each requested attribute, served from the
+        store-wide cache. Returns {"status": "building"} until the first build
+        finishes; after that, requests are answered instantly from the last
+        build while any refresh happens in the background."""
+        data, stale = self._ensure_count_cache()
+        if data is None:
+            return {"status": "building"}
+
+        total = data["patient_total"]
+        # The requested attributes come from the subject's own profile, so the
+        # subject is among the counted patients — report "other subjects".
+        out: Dict[str, Any] = {
+            "status": "ready",
+            "stale": stale,
+            "built_at": data["built_at"],
+            "total_others": max(0, total - 1),
+            "incomplete_categories": data["incomplete"],
+        }
+
+        demo_rows = []
+        d = req.demographics
+        if d and d.gender:
+            n = data["gender"].get(d.gender.lower(), 0)
+            demo_rows.append({"key": "gender", "label": f"gender = {d.gender}", "count": max(0, n - 1)})
+        if d and d.age is not None:
+            tol = d.age_tolerance or 10
+            cy = date.today().year
+            n = sum(c for y, c in data["birth_years"].items() if abs((cy - y) - d.age) <= tol)
+            demo_rows.append({"key": "age", "label": f"age within ±{tol} y of {d.age}", "count": max(0, n - 1)})
+        if d and d.ethnicity:
+            n = data["ethnicity"].get(d.ethnicity.lower(), 0)
+            demo_rows.append({"key": "ethnicity", "label": f"ethnicity = {d.ethnicity}", "count": max(0, n - 1)})
+        out["demographics"] = demo_rows
+
+        for category in CLINICAL_CATEGORIES:
+            key_counts = data["key_counts"].get(category, {})
+            rows = []
+            for item in getattr(req, category) or []:
+                keys = item_keys(item)
+                # Aliases (codes, normalized label) of one attribute count the
+                # same patients; max over aliases avoids double counting.
+                n = max((key_counts.get(k, 0) for k in keys), default=0)
+                rows.append({"label": item.label, "count": max(0, n - 1)})
+            out[category] = rows
+        return out
+
+    def _ensure_count_cache(self):
+        """Return (data, stale). Kicks off a background build when the cache is
+        missing, older than the TTL, or the store's patient count changed."""
+        with _COUNT_CACHE_LOCK:
+            entry = _COUNT_CACHES.setdefault(self.hapi_url, {"building": False, "data": None})
+            data = entry["data"]
+
+        needs_build = data is None
+        stale = False
+        if data is not None:
+            if time.time() - data["built_ts"] > COUNT_CACHE_TTL_SECONDS:
+                needs_build, stale = True, True
+            else:
+                try:
+                    r = requests.get(
+                        f"{self.hapi_url}/Patient?_summary=count",
+                        headers={"Accept": "application/fhir+json"}, timeout=10)
+                    r.raise_for_status()
+                    if r.json().get("total") != data["patient_total"]:
+                        needs_build, stale = True, True
+                except requests.RequestException as e:
+                    logger.warning(f"Count-cache freshness check failed: {e}")
+
+        if needs_build:
+            self._schedule_count_build()
+        return data, stale
+
+    def _schedule_count_build(self):
+        with _COUNT_CACHE_LOCK:
+            entry = _COUNT_CACHES.setdefault(self.hapi_url, {"building": False, "data": None})
+            if entry["building"]:
+                return
+            entry["building"] = True
+
+        def run():
+            try:
+                self._build_count_cache()
+            except Exception as e:
+                logger.error(f"Attribute-count cache build failed: {e}")
+            finally:
+                with _COUNT_CACHE_LOCK:
+                    _COUNT_CACHES[self.hapi_url]["building"] = False
+
+        threading.Thread(target=run, name="twin-count-cache-build", daemon=True).start()
+
+    def _build_count_cache(self):
+        """One sweep of the whole store: per-key patient counts for every
+        clinical attribute plus demographic tallies."""
+        t0 = time.time()
+        patients, _complete = self._fetch_paged("Patient", None, 100000)
+        ids = [p["id"] for p in patients if p.get("id")]
+
+        key_counts: Dict[str, Dict[str, int]] = {}
+        incomplete: List[str] = []
+        for category, resource_types in CLINICAL_CATEGORIES.items():
+            merged: Dict[str, Set[str]] = {}
+            for rt in resource_types:
+                code_field = "medicationCodeableConcept" if rt.startswith("Medication") else "code"
+                by_patient, complete = self._features_by_patient(rt, ids, code_field)
+                if not complete and category not in incomplete:
+                    incomplete.append(category)
+                for pid, keys in by_patient.items():
+                    merged.setdefault(pid, set()).update(keys)
+            counts: Dict[str, int] = {}
+            for keys in merged.values():
+                for k in keys:
+                    counts[k] = counts.get(k, 0) + 1
+            key_counts[category] = counts
+
+        gender = Counter((p.get("gender") or "unknown").lower() for p in patients)
+        birth_years: Counter = Counter()
+        ethnicity: Counter = Counter()
+        for p in patients:
+            bd = p.get("birthDate") or ""
+            if len(bd) >= 4 and bd[:4].isdigit():
+                birth_years[int(bd[:4])] += 1
+            eth = extract_ethnicity(p)
+            if eth:
+                ethnicity[eth.lower()] += 1
+
+        data = {
+            "built_ts": time.time(),
+            "built_at": datetime.now().isoformat(timespec="seconds"),
+            "patient_total": len(patients),
+            "key_counts": key_counts,
+            "gender": dict(gender),
+            "birth_years": dict(birth_years),
+            "ethnicity": dict(ethnicity),
+            "incomplete": incomplete,
+        }
+        with _COUNT_CACHE_LOCK:
+            entry = _COUNT_CACHES.setdefault(self.hapi_url, {"building": False, "data": None})
+            entry["data"] = data
+        logger.info(
+            f"Attribute-count cache built: {len(patients)} patients, "
+            f"{sum(len(c) for c in key_counts.values())} keys, {time.time() - t0:.1f}s")

@@ -767,7 +767,7 @@ async def get_conditions(
 from .fhir_utils import FHIRResourceProcessor
 
 # Digital twin finder
-from .twins import TwinFinder, TwinFindRequest
+from .twins import TwinFinder, TwinFindRequest, AttributeCountsRequest
 
 # Create a FHIR resource processor instance
 fhir_processor = None
@@ -796,6 +796,24 @@ async def get_twin_subject_profile(patient_id: str):
     except Exception as e:
         logger.error(f"Error building twin profile: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Profile fetch failed: {str(e)}")
+
+
+@app.post("/twins/attribute-counts", response_class=JSONResponse)
+async def twin_attribute_counts(request: AttributeCountsRequest):
+    """
+    How many patients in the store share each of the subject's attributes.
+    Served from a store-wide cache (stale-while-revalidate); returns
+    {"status": "building"} until the first build completes — callers poll.
+    """
+    try:
+        finder = TwinFinder(settings.hapi_url)
+        return finder.attribute_counts(request)
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during attribute counts: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error computing attribute counts: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/twins/find", response_class=JSONResponse)

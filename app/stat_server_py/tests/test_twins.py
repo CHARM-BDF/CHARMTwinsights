@@ -76,12 +76,16 @@ PATIENTS = [
     {"resourceType": "Patient", "id": "twin-meh", "gender": "male", "birthDate": "1950-01-01"},
 ]
 CONDITIONS = [
+    {"resourceType": "Condition", "subject": {"reference": "Patient/subj-1"},
+     "code": {"text": "Hypertension (disorder)", "coding": [{"code": "38341003"}]}},
     {"resourceType": "Condition", "subject": {"reference": "Patient/twin-good"},
      "code": {"text": "Hypertension (disorder)", "coding": [{"code": "38341003"}]}},
     {"resourceType": "Condition", "subject": {"reference": "Patient/twin-meh"},
      "code": {"text": "Fracture of arm", "coding": [{"code": "123"}]}},
 ]
 MEDS = [
+    {"resourceType": "MedicationRequest", "subject": {"reference": "Patient/subj-1"},
+     "medicationCodeableConcept": {"text": "Metformin", "coding": [{"code": "860975"}]}},
     {"resourceType": "MedicationRequest", "subject": {"reference": "Patient/twin-good"},
      "medicationCodeableConcept": {"text": "Metformin", "coding": [{"code": "860975"}]}},
 ]
@@ -92,9 +96,16 @@ def fake_fetch(self, resource_type, cohort_id, max_items, elements=None):
     return data[resource_type][:max_items], True
 
 def fake_search(self, resource_type, extra_params, max_items):
+    # Honors subject=Patient/a,Patient/b filters like real FHIR search, so
+    # candidate-scoped fetches exclude the subject exactly as HAPI would.
     data = {"Patient": PATIENTS, "Condition": CONDITIONS,
             "MedicationRequest": MEDS, "MedicationStatement": [], "Procedure": []}
-    return data[resource_type][:max_items], True
+    rows = data[resource_type]
+    for p in extra_params:
+        if p.startswith("subject="):
+            allowed = set(p[len("subject="):].split(","))
+            rows = [r for r in rows if (r.get("subject") or {}).get("reference") in allowed]
+    return rows[:max_items], True
 
 req = TwinFindRequest(
     subject_id=SUBJECT,
@@ -145,6 +156,28 @@ check("prevalence condition count",
 check("prevalence med count", pv["medications"][0]["count"] == 1)
 check("prevalence gender row", any(r["key"] == "gender" and r["count"] == 1 for r in pv["demographics"]))
 check("prevalence age row", any(r["key"] == "age" and r["count"] == 1 for r in pv["demographics"]))
+
+# ── store-wide attribute-count cache ─────────────────────────────────────────
+from pyserver.twins import AttributeCountsRequest
+
+with patch.object(TwinFinder, "_fetch_paged", fake_fetch), \
+     patch.object(TwinFinder, "_fetch_search", fake_search):
+    fc = TwinFinder("http://fake")
+    fc._build_count_cache()  # synchronous build (no background thread in tests)
+    outc = fc.attribute_counts(AttributeCountsRequest(
+        subject_id=SUBJECT,
+        demographics=TwinDemographics(gender="female", age=58, age_tolerance=10),
+        conditions=[TwinCriteriaItem(label="Hypertension", codes=["38341003"])],
+        medications=[TwinCriteriaItem(label="Metformin", codes=["860975"])],
+    ))
+check("counts ready", outc["status"] == "ready", f"(status={outc.get('status')})")
+check("counts total others", outc["total_others"] == 2)
+check("counts exclude the subject",
+      outc["conditions"][0]["count"] == 1 and outc["medications"][0]["count"] == 1,
+      f"(cond={outc['conditions']}, med={outc['medications']})")
+check("counts gender excludes subject",
+      any(r["key"] == "gender" and r["count"] == 1 for r in outc["demographics"]))
+check("counts age band", any(r["key"] == "age" and r["count"] == 1 for r in outc["demographics"]))
 
 # error: nothing selected
 try:

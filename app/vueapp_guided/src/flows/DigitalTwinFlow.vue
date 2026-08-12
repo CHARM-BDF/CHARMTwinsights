@@ -86,6 +86,16 @@
           Check the attributes that matter. Only checked attributes contribute to the similarity score.
         </p>
 
+        <!-- prevalence counts state -->
+        <p v-if="attrCounts.status === 'building'" class="muted counts-note">
+          <span class="spinner tiny"></span>
+          Counting attribute prevalence across the store — counts will appear here shortly…
+        </p>
+        <p v-else-if="attrCounts.status === 'ready'" class="muted counts-note">
+          Each count shows how many of the <strong>{{ attrCounts.totalOthers }}</strong> other
+          patients share that attribute — low counts make strong twinning criteria.
+        </p>
+
         <!-- Demographics group -->
         <div class="attr-group">
           <label class="attr-group-head">
@@ -101,6 +111,7 @@
             <label v-if="profile.gender" class="attr-item">
               <input type="checkbox" v-model="sel.gender" />
               gender: <strong>{{ profile.gender }}</strong>
+              <span v-if="attrCounts.demo.gender != null" class="attr-count" :title="countTitle(attrCounts.demo.gender)">{{ attrCounts.demo.gender }}</span>
             </label>
             <label v-if="profile.age != null" class="attr-item">
               <input type="checkbox" v-model="sel.age" />
@@ -108,10 +119,12 @@
               <span v-if="sel.age" class="tolerance">
                 ± <input type="number" min="1" max="100" v-model.number="sel.ageTolerance" class="tol-input" /> y
               </span>
+              <span v-if="attrCounts.demo.age != null" class="attr-count" :title="countTitle(attrCounts.demo.age)">{{ attrCounts.demo.age }}</span>
             </label>
             <label v-if="profile.ethnicity" class="attr-item">
               <input type="checkbox" v-model="sel.ethnicity" />
               ethnicity: <strong>{{ profile.ethnicity }}</strong>
+              <span v-if="attrCounts.demo.ethnicity != null" class="attr-count" :title="countTitle(attrCounts.demo.ethnicity)">{{ attrCounts.demo.ethnicity }}</span>
             </label>
           </div>
         </div>
@@ -132,6 +145,11 @@
             <label v-for="item in profile[group.key]" :key="item.label" class="attr-item">
               <input type="checkbox" v-model="sel[group.key][item.label]" />
               {{ item.label }}
+              <span
+                v-if="countFor(group.key, item.label) != null"
+                class="attr-count"
+                :title="countTitle(countFor(group.key, item.label))"
+              >{{ countFor(group.key, item.label) }}</span>
             </label>
           </div>
           <div v-else class="attr-items muted" style="padding: 0.2rem 0 0.4rem">(none recorded)</div>
@@ -184,6 +202,13 @@
           </select>
         </div>
       </details>
+
+      <p v-if="data.mode === 'existing' && searchScope" class="muted scope-note">
+        🔎 Will search <strong>{{ searchScope.patients ?? '…' }}</strong> patient records
+        <template v-if="data.scopeCohort"> in cohort <code>{{ data.scopeCohort }}</code></template>
+        <template v-else> across all <strong>{{ searchScope.cohorts }}</strong> cohorts</template>
+        — the subject itself is excluded from matches.
+      </p>
 
       <!-- generation options -->
       <template v-if="data.mode === 'generate'">
@@ -246,7 +271,17 @@
       <!-- searching -->
       <div v-if="run.state === 'searching'" class="submit-state loading">
         <span class="spinner"></span>
-        <span>Scoring candidates{{ searchScopeLabel ? ` in ${searchScopeLabel}` : ' across the store' }}…</span>
+        <div>
+          <div>
+            Scoring
+            <strong v-if="searchScope?.patients != null">{{ searchScope.patients }}</strong>
+            patient records{{ searchScopeLabel ? ` in ${searchScopeLabel}` : searchScope ? ` across ${searchScope.cohorts} cohorts` : ' across the store' }}…
+          </div>
+          <div class="muted search-progress">
+            {{ searchElapsed }}s elapsed — fetching each candidate's
+            {{ selectedCategoriesLabel }}, then ranking by similarity
+          </div>
+        </div>
       </div>
 
       <!-- error -->
@@ -570,6 +605,89 @@ watch(() => store.currentStep, (s) => {
   if (s === 3) startRun()
 })
 
+// ─── attribute prevalence counts (attributes step) ───────────────────────────
+// Served by the store-wide count cache in stat_server_py: the first request
+// after a store change triggers a background rebuild ("building"), everything
+// after that is answered instantly.
+const attrCounts = reactive({
+  status: 'idle', // idle | building | ready | error
+  totalOthers: 0,
+  stale: false,
+  demo: {},    // gender/age/ethnicity -> count
+  byLabel: {}, // category -> { label -> count }
+})
+let countsTimer = null
+
+function stopCountsPolling() {
+  if (countsTimer) { clearTimeout(countsTimer); countsTimer = null }
+}
+
+async function fetchAttrCounts() {
+  stopCountsPolling()
+  const p = profile.value
+  if (!p) return
+  try {
+    const body = {
+      subject_id: p.id,
+      demographics: {
+        gender: p.gender ?? null,
+        age: p.age ?? null,
+        age_tolerance: sel.ageTolerance || 10,
+        ethnicity: p.ethnicity ?? null,
+      },
+      conditions: p.conditions.map(({ label, codes }) => ({ label, codes })),
+      medications: p.medications.map(({ label, codes }) => ({ label, codes })),
+      procedures: p.procedures.map(({ label, codes }) => ({ label, codes })),
+    }
+    const { data: resp } = await axios.post(
+      `${store.apiBase}/twins/attribute-counts`, body, { timeout: 60_000 },
+    )
+    if (profile.value?.id !== p.id) return // subject changed mid-flight
+    if (resp.status === 'building') {
+      attrCounts.status = 'building'
+      countsTimer = setTimeout(fetchAttrCounts, 3000)
+      return
+    }
+    attrCounts.totalOthers = resp.total_others ?? 0
+    attrCounts.stale = !!resp.stale
+    const demo = {}
+    for (const r of resp.demographics ?? []) demo[r.key] = r.count
+    attrCounts.demo = demo
+    const byLabel = {}
+    for (const cat of ['conditions', 'medications', 'procedures']) {
+      byLabel[cat] = {}
+      for (const r of resp[cat] ?? []) byLabel[cat][r.label] = r.count
+    }
+    attrCounts.byLabel = byLabel
+    attrCounts.status = 'ready'
+  } catch {
+    attrCounts.status = 'error' // counts are decoration — fail quietly
+  }
+}
+
+function countFor(cat, label) {
+  return attrCounts.byLabel[cat]?.[label] ?? null
+}
+function countTitle(n) {
+  return `${n} of ${attrCounts.totalOthers} other patients share this attribute`
+}
+
+// (Re)fetch counts whenever a profile arrives; age-tolerance changes shift the
+// age-band count, so refresh on those too (cheap — served from the cache).
+watch(profile, (p) => {
+  stopCountsPolling()
+  attrCounts.status = 'idle'
+  attrCounts.demo = {}
+  attrCounts.byLabel = {}
+  if (p) fetchAttrCounts()
+})
+watch(() => sel.ageTolerance, () => {
+  if (profile.value && (attrCounts.status === 'ready' || attrCounts.status === 'error')) {
+    fetchAttrCounts()
+  }
+})
+onUnmounted(stopCountsPolling)
+
 // Changing the subject invalidates profile, cached match records, and results.
 watch(() => data.subjectId, () => {
   profile.value = null
@@ -865,6 +983,43 @@ async function startRun() {
   else await runSearch(data.scopeCohort || null)
 }
 
+// Scope preview: how many records / cohorts the search will cover. Exact
+// store total once the count cache has answered; cohort-sum fallback (which
+// can double-count patients tagged into several cohorts).
+const searchScope = computed(() => {
+  if (data.mode !== 'existing') return null
+  if (data.scopeCohort) {
+    const c = cohorts.value.find((x) => x.cohort_id === data.scopeCohort)
+    return { cohorts: 1, patients: c?.patient_count ?? null }
+  }
+  const exact = attrCounts.status === 'ready' ? attrCounts.totalOthers + 1 : null
+  const sum = cohorts.value.reduce((a, c) => a + (c.patient_count || 0), 0)
+  return { cohorts: cohorts.value.length, patients: exact ?? (sum || null) }
+})
+
+const selectedCategoriesLabel = computed(() => {
+  const parts = []
+  if (sel.gender || sel.age || sel.ethnicity) parts.push('demographics')
+  for (const g of clinicalGroups) {
+    if (Object.values(sel[g.key]).some(Boolean)) parts.push(g.key)
+  }
+  return parts.join(', ') || 'attributes'
+})
+
+// Elapsed-seconds ticker shown while the search itself runs.
+const searchElapsed = ref(0)
+let elapsedTimer = null
+watch(() => run.state, (s) => {
+  if (s === 'searching') {
+    searchElapsed.value = 0
+    elapsedTimer = setInterval(() => { searchElapsed.value += 1 }, 1000)
+  } else if (elapsedTimer) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+})
+onUnmounted(() => { if (elapsedTimer) clearInterval(elapsedTimer) })
+
 async function runSearch(cohortId) {
   run.state = 'searching'
   try {
@@ -1093,6 +1248,29 @@ async function exportFhir(patientId) {
 }
 .tolerance { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--text-muted); }
 .tol-input { width: 58px; padding: 0.1rem 0.3rem; font-size: 0.85rem; }
+
+/* ─── attribute prevalence counts ─── */
+.counts-note {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  margin: -0.2rem 0 0.9rem;
+}
+.spinner.tiny { width: 12px; height: 12px; border-width: 2px; }
+.scope-note { margin-top: 0.9rem; font-size: 0.9rem; }
+.search-progress { font-size: 0.82rem; margin-top: 0.25rem; }
+.attr-count {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  flex-shrink: 0;
+}
 
 /* ─── step 2: mode cards ─── */
 .mode-grid {
