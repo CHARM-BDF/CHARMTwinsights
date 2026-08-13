@@ -230,11 +230,19 @@
         </p>
       </template>
 
-      <div class="field-row" style="margin-top: 0.8rem">
-        <div class="field">
-          <label>Top K results</label>
-          <input type="number" min="1" max="500" v-model.number="data.topK" />
-        </div>
+      <div class="topk-line" style="margin-top: 0.8rem">
+        Showing the top <strong>{{ data.topK }}</strong> matches
+        <template v-if="!editTopK">
+          <button class="link-btn" @click="editTopK = true">change</button>
+        </template>
+        <template v-else>
+          <input
+            type="number" min="1" max="500" class="topk-input"
+            v-model.number="data.topK"
+            @keyup.enter="editTopK = false"
+          />
+          <button class="link-btn" @click="editTopK = false">done</button>
+        </template>
       </div>
 
       <div class="field">
@@ -488,10 +496,13 @@ const data = store.flowData.twins ?? reactive({
   scopeCohort: '',
   genCount: 100,
   genAgeBand: 5,
-  topK: 20,
+  topK: 10,
   weighting: 'equal',
 })
 store.flowData.twins = data
+
+// Top-K is a fixed default (10) shown as text; the input only appears on demand.
+const editTopK = ref(false)
 
 // ─── steps ───────────────────────────────────────────────────────────────────
 const steps = reactive([
@@ -1291,6 +1302,27 @@ async function exportFhir(patientId) {
 }
 .spinner.tiny { width: 12px; height: 12px; border-width: 2px; }
 .scope-note { margin-top: 0.9rem; font-size: 0.9rem; }
+
+/* ─── top-K line ─── */
+.topk-line {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+  color: var(--text);
+  flex-wrap: wrap;
+}
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #db2777;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-btn:hover { color: #be185d; }
+.topk-input { width: 74px; padding: 0.15rem 0.4rem; font-size: 0.88rem; }
 
 /* ─── scoring emphasis radio pills ─── */
 .emph-row {
