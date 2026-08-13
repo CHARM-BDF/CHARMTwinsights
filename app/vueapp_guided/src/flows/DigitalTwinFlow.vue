@@ -72,9 +72,9 @@
       </div>
 
       <template v-else-if="profile">
-        <!-- Subject summary -->
-        <div class="subject-card">
-          <span class="mono subject-id">{{ profile.id }}</span>
+        <!-- Subject summary (the raw patient id stays out of the way here —
+             it was picked on the previous step; hover the card if needed) -->
+        <div class="subject-card" :title="`Subject record: ${profile.id}`">
           <span class="muted">{{ profile.gender ?? '?' }} · {{ profile.age != null ? profile.age + ' y' : 'age unknown' }}</span>
           <span v-if="profile.ethnicity" class="muted">· {{ profile.ethnicity }}</span>
           <span class="muted subject-counts">
@@ -1236,7 +1236,6 @@ async function exportFhir(patientId) {
   border-radius: var(--radius-sm);
   padding: 0.7rem 1rem;
 }
-.subject-id { font-weight: 600; }
 .subject-counts { margin-left: auto; font-size: 0.83rem; }
 
 .attr-group {
