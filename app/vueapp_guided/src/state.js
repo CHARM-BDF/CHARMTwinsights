@@ -64,6 +64,22 @@ export const FLOWS = [
     category: 'Data management',
   },
   {
+    id: 'export',
+    title: 'Export FHIR data',
+    subtitle: 'Zip of per-resource-type NDJSON — whole store or selected cohorts, Hugging Face-ready',
+    icon: '📦',
+    accent: '#0d9488',
+    category: 'Data management',
+  },
+  {
+    id: 'export',
+    title: 'Export FHIR data',
+    subtitle: 'Download everything or selected cohorts as zipped NDJSON — Hugging Face-ready',
+    icon: '📦',
+    accent: '#0d9488',
+    category: 'Data management',
+  },
+  {
     id: 'synthea',
     title: 'Generate synthetic FHIR patients',
     subtitle: 'Synthea-based cohort with demographics, geography, medical history',

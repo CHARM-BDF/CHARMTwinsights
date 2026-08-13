@@ -9,10 +9,12 @@ import pandas as pd
 
 # FastAPI imports
 from fastapi import FastAPI, HTTPException, Query, Path
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+from datetime import datetime
+from starlette.background import BackgroundTask
 
 # FHIR imports
 from fhiry import Fhirsearch
@@ -768,6 +770,7 @@ from .fhir_utils import FHIRResourceProcessor
 
 # Digital twin finder
 from .twins import TwinFinder, TwinFindRequest, AttributeCountsRequest
+from .export import build_export_zip
 
 # Create a FHIR resource processor instance
 fhir_processor = None
@@ -796,6 +799,37 @@ async def get_twin_subject_profile(patient_id: str):
     except Exception as e:
         logger.error(f"Error building twin profile: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Profile fetch failed: {str(e)}")
+
+
+@app.get("/export/fhir")
+def export_fhir_data(cohort_id: Optional[List[str]] = Query(None)):
+    """
+    Export the FHIR store as a zip of per-resource-type NDJSON files (FHIR
+    Bulk Data layout, Hugging Face-ready). Repeat ?cohort_id= to scope the
+    export to specific cohorts; omit it to export everything.
+
+    Sync endpoint on purpose: FastAPI runs it in the threadpool, so the
+    (potentially minutes-long) zip build doesn't block the event loop.
+    """
+    try:
+        path, manifest = build_export_zip(settings.hapi_url, cohort_id)
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during export: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error building export: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    scope = "all" if manifest["scope"] == "all" else "-".join(manifest["cohorts"])[:60]
+    filename = f"charmtwinsights-fhir-{scope}-{stamp}.zip"
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=filename,
+        headers={"X-Export-Total-Resources": str(manifest["total_resources"])},
+        background=BackgroundTask(os.unlink, path),
+    )
 
 
 @app.post("/twins/attribute-counts", response_class=JSONResponse)

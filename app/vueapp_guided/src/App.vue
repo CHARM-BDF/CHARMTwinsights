@@ -25,6 +25,7 @@ import SyntheaFhirFlow from './flows/SyntheaFhirFlow.vue'
 import IcuVitalsFlow from './flows/IcuVitalsFlow.vue'
 import BrowsingFlow from './flows/BrowsingFlow.vue'
 import IngestionFlow from './flows/IngestionFlow.vue'
+import ExportFlow from './flows/ExportFlow.vue'
 import DigitalTwinFlow from './flows/DigitalTwinFlow.vue'
 import ModelStudioFlow from './flows/ModelStudioFlow.vue'
 import ApplyModelFlow from './flows/ApplyModelFlow.vue'
@@ -32,6 +33,7 @@ import AgentConsoleFlow from './flows/AgentConsoleFlow.vue'
 
 const flowMap = {
   ingest: IngestionFlow,
+  export: ExportFlow,
   synthea: SyntheaFhirFlow,
   vitals: IcuVitalsFlow,
   browse: BrowsingFlow,

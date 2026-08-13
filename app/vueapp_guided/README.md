@@ -15,6 +15,7 @@ Shell, wizard framework, and several fully wired flows. Per flow:
 | Generate synthetic FHIR cohort (Synthea) | ✅ wired (job submit + progress polling) |
 | Browse cohorts & patients | ✅ wired (analytics, drill-down, timeline, FHIR/PDF export, delete) |
 | Ingest external FHIR data | ✅ wired |
+| Export FHIR data | ✅ wired — whole store or selected cohorts as zipped per-type NDJSON (FHIR Bulk Data layout, Hugging Face-ready) |
 | Generate synthetic ICU vitals (TimeAutoDiff) | ✅ wired (single + batch, client-side charts) |
 | Browse & register models | 🔴 mockup — backend endpoints exist, wiring pending |
 | Apply a model to a cohort | 🔴 mockup — needs feature-mapping + batch-predict backend |
@@ -51,6 +52,7 @@ src/
     IcuVitalsFlow.vue
     BrowsingFlow.vue
     IngestionFlow.vue
+    ExportFlow.vue
     DigitalTwinFlow.vue
     ModelStudioFlow.vue
     AgentConsoleFlow.vue

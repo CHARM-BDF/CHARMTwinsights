@@ -11,6 +11,7 @@ from .routers import modeling
 from .routers import stat_server_py
 from .routers import ingestion
 from .routers import twins
+from .routers import export
 from .config import settings
 
 logging.basicConfig(
@@ -42,6 +43,7 @@ app.include_router(synthea_pdf.router)
 app.include_router(stat_server_py.router)
 app.include_router(ingestion.router)
 app.include_router(twins.router)
+app.include_router(export.router)
 
 @app.get("/health")
 async def health_check():
