@@ -130,11 +130,25 @@ worst = out["matches"][-1]
 check("worst is twin-meh w/ low score", worst["patient_id"] == "twin-meh" and worst["score"] < 0.3, f"(score={worst['score']})")
 check("coverage lists categories", set(out["coverage"]["categories_scored"]) == {"demographics", "conditions", "medications"})
 
-# weighting: pharma should weight meds 2x — twin-meh has no meds/conds, score stays low; sanity only
-req_pharma = req.model_copy(update={"weighting": "pharma"})
-with patch.object(TwinFinder, "_fetch_paged", fake_fetch), patch.object(TwinFinder, "_fetch_search", fake_search):
-    out2 = TwinFinder("http://fake").find(req_pharma)
-check("pharma preset runs", out2["matches"][0]["patient_id"] == "twin-good")
+# ── weighting resolution ─────────────────────────────────────────────────────
+from pyserver.twins import resolve_weights
+check("equal weights all 1.0", set(resolve_weights("equal").values()) == {1.0})
+check("category emphasis doubles",
+      resolve_weights("medications")["medications"] == 2.0
+      and resolve_weights("medications")["conditions"] == 1.0)
+check("legacy balanced = equal", resolve_weights("balanced") == resolve_weights("equal"))
+check("legacy pharma emphasizes meds", resolve_weights("pharma")["medications"] == 2.0)
+try:
+    resolve_weights("bogus")
+    check("bogus weighting rejected", False)
+except ValueError:
+    check("bogus weighting rejected", True)
+
+# emphasis end-to-end: legacy alias and category name both run and rank twin-good first
+for w in ("pharma", "conditions"):
+    with patch.object(TwinFinder, "_fetch_paged", fake_fetch), patch.object(TwinFinder, "_fetch_search", fake_search):
+        out2 = TwinFinder("http://fake").find(req.model_copy(update={"weighting": w}))
+    check(f"weighting '{w}' runs", out2["matches"][0]["patient_id"] == "twin-good")
 
 # ── prevalence block ─────────────────────────────────────────────────────────
 def fake_profile(self, pid):

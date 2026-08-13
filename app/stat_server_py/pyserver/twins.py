@@ -34,13 +34,33 @@ CLINICAL_CATEGORIES = {
     "procedures": ["Procedure"],
 }
 
-# Weighting presets: relative weight per category. Only categories the caller
-# actually selected participate; weights are renormalized over those.
-WEIGHT_PRESETS = {
-    "balanced": {"demographics": 1.0, "conditions": 1.0, "medications": 1.0, "procedures": 1.0},
-    "clinical": {"demographics": 1.0, "conditions": 2.0, "medications": 1.0, "procedures": 2.0},
-    "pharma":   {"demographics": 1.0, "conditions": 1.0, "medications": 2.0, "procedures": 1.0},
-}
+# Weighting: 'equal' weighs every selected category the same; naming one
+# category ('demographics', 'conditions', 'medications', 'procedures')
+# emphasizes it by this factor. Only categories the caller actually selected
+# participate; weights are renormalized over those.
+WEIGHT_EMPHASIS_FACTOR = 2.0
+WEIGHT_CATEGORIES = ("demographics", "conditions", "medications", "procedures")
+
+
+def resolve_weights(weighting: str) -> Dict[str, float]:
+    """Weights per category for a weighting name. Accepts 'equal' (default),
+    one category name to emphasize, or the legacy preset aliases
+    'balanced' (= equal), 'clinical', and 'pharma'."""
+    weights = {c: 1.0 for c in WEIGHT_CATEGORIES}
+    key = (weighting or "equal").strip().lower()
+    if key in ("equal", "balanced"):
+        return weights
+    if key in weights:
+        weights[key] = WEIGHT_EMPHASIS_FACTOR
+        return weights
+    if key == "clinical":  # legacy preset
+        weights["conditions"] = weights["procedures"] = WEIGHT_EMPHASIS_FACTOR
+        return weights
+    if key == "pharma":  # legacy preset
+        weights["medications"] = WEIGHT_EMPHASIS_FACTOR
+        return weights
+    raise ValueError(
+        f"Unknown weighting '{weighting}'. Valid: equal, {', '.join(WEIGHT_CATEGORIES)}")
 
 
 # ─── request / response models ────────────────────────────────────────────────
@@ -68,7 +88,10 @@ class TwinFindRequest(BaseModel):
     cohort_id: Optional[str] = Field(None, description="Restrict candidates to this cohort (tag filter); None = all patients")
     exclude_subject: bool = Field(True, description="Drop the subject itself from the results")
     top_k: int = Field(20, gt=0, le=500)
-    weighting: str = Field("balanced", description="One of: " + ", ".join(WEIGHT_PRESETS))
+    weighting: str = Field(
+        "equal",
+        description="'equal', or a category name to emphasize it "
+                    f"×{WEIGHT_EMPHASIS_FACTOR:g}: " + ", ".join(WEIGHT_CATEGORIES))
     max_candidates: int = Field(2000, gt=0, le=10000, description="Safety cap on patients scanned")
 
 
@@ -349,9 +372,7 @@ class TwinFinder:
     # -- entry point ---------------------------------------------------------
 
     def find(self, req: TwinFindRequest) -> Dict[str, Any]:
-        weights = WEIGHT_PRESETS.get(req.weighting)
-        if weights is None:
-            raise ValueError(f"Unknown weighting '{req.weighting}'. Valid: {', '.join(WEIGHT_PRESETS)}")
+        weights = resolve_weights(req.weighting)
 
         # Which categories participate in scoring
         use_demo = req.demographics is not None and (

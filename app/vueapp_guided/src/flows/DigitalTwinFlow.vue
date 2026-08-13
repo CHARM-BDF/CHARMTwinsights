@@ -235,14 +235,29 @@
           <label>Top K results</label>
           <input type="number" min="1" max="500" v-model.number="data.topK" />
         </div>
-        <div class="field">
-          <label>Weighting preset</label>
-          <select v-model="data.weighting">
-            <option value="balanced">Balanced — all selected groups equal</option>
-            <option value="clinical">Clinical-heavy — conditions &amp; procedures ×2</option>
-            <option value="pharma">Pharmacology-heavy — medications ×2</option>
-          </select>
+      </div>
+
+      <div class="field">
+        <label>Scoring emphasis</label>
+        <div class="emph-row" role="radiogroup" aria-label="Scoring emphasis">
+          <label class="emph-option" :class="{ active: data.weighting === 'equal' }">
+            <input type="radio" value="equal" v-model="data.weighting" />
+            Equal weight
+          </label>
+          <label
+            v-for="c in weightableCategories"
+            :key="c.key"
+            class="emph-option"
+            :class="{ active: data.weighting === c.key }"
+          >
+            <input type="radio" :value="c.key" v-model="data.weighting" />
+            {{ c.title }}
+          </label>
         </div>
+        <p class="muted" style="margin-top: 0.4rem; font-size: 0.85rem">
+          The emphasized category counts double when the per-category subscores are combined.
+          Only categories with selected attributes are offered.
+        </p>
       </div>
     </template>
 
@@ -474,7 +489,7 @@ const data = store.flowData.twins ?? reactive({
   genCount: 100,
   genAgeBand: 5,
   topK: 20,
-  weighting: 'balanced',
+  weighting: 'equal',
 })
 store.flowData.twins = data
 
@@ -1006,6 +1021,24 @@ const selectedCategoriesLabel = computed(() => {
   return parts.join(', ') || 'attributes'
 })
 
+// Categories offered for scoring emphasis: only those with selected criteria.
+const weightableCategories = computed(() => {
+  const cats = []
+  if (sel.gender || sel.age || sel.ethnicity) cats.push({ key: 'demographics', title: 'Demographics' })
+  for (const g of clinicalGroups) {
+    if (Object.values(sel[g.key]).some(Boolean)) cats.push({ key: g.key, title: g.title })
+  }
+  return cats
+})
+
+// If the emphasized category loses all its selected attributes — or an old
+// session restored a legacy preset value — fall back to equal weight.
+watch(weightableCategories, (cats) => {
+  if (data.weighting !== 'equal' && !cats.some((c) => c.key === data.weighting)) {
+    data.weighting = 'equal'
+  }
+}, { immediate: true })
+
 // Elapsed-seconds ticker shown while the search itself runs.
 const searchElapsed = ref(0)
 let elapsedTimer = null
@@ -1259,6 +1292,36 @@ async function exportFhir(patientId) {
 }
 .spinner.tiny { width: 12px; height: 12px; border-width: 2px; }
 .scope-note { margin-top: 0.9rem; font-size: 0.9rem; }
+
+/* ─── scoring emphasis radio pills ─── */
+.emph-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding-top: 0.2rem;
+}
+.emph-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.9rem;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  color: var(--text);
+}
+.emph-option:hover { border-color: #db2777; }
+.emph-option.active {
+  border-color: #db2777;
+  background: #fdf2f8;
+  color: #be185d;
+  font-weight: 600;
+}
+.emph-option input { accent-color: #db2777; margin: 0; }
 .search-progress { font-size: 0.82rem; margin-top: 0.25rem; }
 .attr-count {
   margin-left: auto;
