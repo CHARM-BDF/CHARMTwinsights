@@ -130,9 +130,50 @@ with patch("pyserver.export._iter_search", fake_iter), \
             mf = json.loads(zf.read("manifest.json"))
             check("flat manifest", mf["patients"] == 3 and mf["indicator_columns"] == len(header) - 7)
             card = zf.read("README.md").decode()
-            check("flat card has csv snippet", 'load_dataset("csv"' in card)
+            check("flat card describes the csv", "patients_flat.csv" in card)
+            check("flat card is vendor-neutral", "Hugging Face" not in card and "load_dataset" not in card)
     finally:
         os.unlink(path3)
+
+# ── bundles (Synthea-style layout) export ────────────────────────────────────
+from pyserver.export import build_bundles_export_zip, _patient_filename
+
+def fake_everything(hapi_url, pid):
+    pat = next(p for p in ALL["Patient"] if p["id"] == pid)
+    linked = [r for r in ALL.get("Condition", [])
+              if (r.get("subject") or {}).get("reference") == f"Patient/{pid}"]
+    return [pat] + linked
+
+with patch("pyserver.export._iter_search", fake_iter), \
+     patch("pyserver.export._count_type", fake_count), \
+     patch("pyserver.export._fetch_everything", fake_everything):
+    expected_names = {_patient_filename(p) for p in ALL["Patient"]}
+    path4, m4 = build_bundles_export_zip("http://fake")
+    try:
+        with zipfile.ZipFile(path4) as zf:
+            names = set(zf.namelist())
+            check("bundle file per patient", expected_names <= names, f"(names={sorted(names)})")
+            check("hospital info file present", "hospitalInformation.json" in names)
+            b = json.loads(zf.read(sorted(expected_names)[0]))
+            check("bundle is a collection", b["resourceType"] == "Bundle" and b["type"] == "collection")
+            check("bundle carries the patient",
+                  any(e["resource"]["resourceType"] == "Patient" for e in b["entry"]))
+            check("bundles manifest", m4["patients"] == 3 and m4["format"].startswith("per-patient"))
+            card = zf.read("README.md").decode()
+            check("bundles card is vendor-neutral", "Hugging Face" not in card and "load_dataset" not in card)
+    finally:
+        os.unlink(path4)
+
+    path5, m5 = build_bundles_export_zip("http://fake", ["c1"])
+    try:
+        with zipfile.ZipFile(path5) as zf:
+            names = set(zf.namelist())
+            in_c1 = {_patient_filename(p) for p in TAGGED["c1"]["Patient"]}
+            out_of_c1 = expected_names - in_c1
+            check("cohort bundles scoped", in_c1 <= names and not (out_of_c1 & names),
+                  f"(names={sorted(names)})")
+    finally:
+        os.unlink(path5)
 
 check("type lists sane", "Patient" in PATIENT_TYPES and "Organization" in REFERENCE_TYPES)
 

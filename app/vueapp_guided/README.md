@@ -15,7 +15,7 @@ Shell, wizard framework, and several fully wired flows. Per flow:
 | Generate synthetic FHIR cohort (Synthea) | ✅ wired (job submit + progress polling) |
 | Browse cohorts & patients | ✅ wired (analytics, drill-down, timeline, FHIR/PDF export, delete) |
 | Ingest external FHIR data | ✅ wired |
-| Export FHIR data | ✅ wired — whole store or selected cohorts as zipped per-type NDJSON (FHIR Bulk Data layout, Hugging Face-ready) |
+| Export FHIR data | ✅ wired — whole store or selected cohorts, zipped: per-type NDJSON (Bulk Data layout), per-patient bundles (Synthea-style), or flat CSV |
 | Generate synthetic ICU vitals (TimeAutoDiff) | ✅ wired (single + batch, client-side charts) |
 | Browse & register models | 🔴 mockup — backend endpoints exist, wiring pending |
 | Apply a model to a cohort | 🔴 mockup — needs feature-mapping + batch-predict backend |

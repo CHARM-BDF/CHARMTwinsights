@@ -23,7 +23,8 @@ BACKEND_URL = settings.stat_server_py_url.rstrip("/")
 @router.get("/fhir")
 async def proxy_export_fhir(cohort_id: List[str] = Query(default=[]),
                             format: str = Query("ndjson")):
-    """Zip export: format=ndjson (Bulk Data layout) or format=flat (one CSV
+    """Zip export: format=ndjson (Bulk Data layout), format=bundles (one
+    Bundle file per patient, Synthea-style layout), or format=flat (one CSV
     row per patient). Repeat ?cohort_id= to export specific cohorts; omit for
     the whole store. Streamed through so large exports never buffer here."""
     url = f"{BACKEND_URL}/export/fhir"

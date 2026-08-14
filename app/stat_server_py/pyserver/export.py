@@ -1,17 +1,16 @@
 """
 FHIR Data Export Module
 
-Two export formats, both zipped:
+Three export formats, all zipped:
 
 - "ndjson" (default): the FHIR Bulk Data layout — one newline-delimited JSON
-  file per resource type, full fidelity, plus manifest.json and a dataset-card
-  README. Loads directly into Hugging Face datasets
-  (load_dataset("json", data_files=...)), and push_to_hub() converts to
-  Parquet automatically.
+  file per resource type, full fidelity, plus manifest.json and a README.
+- "bundles": the layout Synthea generates — one FHIR Bundle file per patient
+  (all of their resources), plus practitionerInformation.json and
+  hospitalInformation.json holding the provider/reference resources.
 - "flat": one CSV row per patient — demographics plus 0/1 indicator columns
   for every condition / medication / procedure present in the scope, with a
-  data_dictionary.json mapping columns back to display labels. The ML-ready
-  shape (load_dataset("csv", ...)).
+  data_dictionary.json mapping columns back to display labels.
 
 Scoping: cohort exports rely on the urn:charm:cohort meta tag, which the
 generation and ingestion pipelines apply to every resource in a bundle —
@@ -144,19 +143,7 @@ patient records resolve.
 |---|---|
 {counts}
 
-## Loading with Hugging Face datasets
-
-```python
-from datasets import load_dataset
-
-ds = load_dataset("json", data_files={{
-    "patients": "Patient.ndjson",
-    "conditions": "Condition.ndjson",
-}})
-```
-
-`push_to_hub()` converts to Parquet automatically, so this layout uploads
-to the Hub as-is. See `manifest.json` for scope, counts, and verification.
+See `manifest.json` for scope, counts, and count verification.
 """
 
 
@@ -172,14 +159,6 @@ its display label and patient count.
 
 - Patients: {manifest['patients']}
 - Indicator columns: {manifest['indicator_columns']}
-
-## Loading with Hugging Face datasets
-
-```python
-from datasets import load_dataset
-
-ds = load_dataset("csv", data_files="patients_flat.csv")
-```
 """
 
 
@@ -379,6 +358,169 @@ def build_flat_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None)
             zf.writestr("data_dictionary.json", json.dumps(dictionary, indent=2))
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
             zf.writestr("README.md", _flat_card(manifest))
+    except Exception:
+        tmp.close()
+        os.unlink(tmp.name)
+        raise
+    tmp.close()
+    return tmp.name, manifest
+
+
+# ─── per-patient bundles (Synthea-style layout) export ───────────────────────
+
+def _bundles_card(manifest: Dict) -> str:
+    return f"""# CHARMTwinsights FHIR export — per-patient bundles
+
+Exported {manifest['exported_at']} from {_scope_line(manifest)}.
+
+The layout Synthea generates: one FHIR R4 Bundle (type `collection`) per
+patient holding every resource of that patient, named `Given_Family_id.json`,
+plus the provider/reference resources the records point at:
+
+- `practitionerInformation.json` — Practitioner and PractitionerRole
+- `hospitalInformation.json` — Organization and Location
+
+- Patients: {manifest['patients']}
+- Total resources: {manifest['total_resources']}
+
+See `manifest.json` for details.
+"""
+
+
+def _patient_filename(patient: Dict) -> str:
+    """Mirror Synthea's Given_Family_id.json naming where a name exists."""
+    name = (patient.get("name") or [{}])[0]
+    given = (name.get("given") or [""])[0] or ""
+    family = name.get("family") or ""
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "", f"{given}_{family}").strip("_")
+    pid = patient.get("id") or "unknown"
+    return f"{slug}_{pid}.json" if slug else f"{pid}.json"
+
+
+def _fetch_everything(hapi_url: str, patient_id: str) -> List[Dict]:
+    """Every resource of one patient via $everything, following next links.
+    Runs server-side, so HAPI's paging links resolve; one retry covers an
+    expired paging cursor."""
+    for attempt in (1, 2):
+        try:
+            url = f"{hapi_url}/Patient/{patient_id}/$everything?_count=1000"
+            out: List[Dict] = []
+            while url:
+                r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=120)
+                r.raise_for_status()
+                bundle = r.json()
+                for entry in bundle.get("entry", []) or []:
+                    res = entry.get("resource")
+                    if res:
+                        out.append(res)
+                url = next((l.get("url") for l in bundle.get("link", []) or []
+                            if l.get("relation") == "next"), None)
+            return out
+        except requests.RequestException:
+            if attempt == 2:
+                raise
+            logger.warning(f"$everything retry for patient {patient_id}")
+    return []
+
+
+def _write_bundle_file(path: str, resources: List[Dict]) -> None:
+    """Stream a collection Bundle to disk without holding its JSON in memory."""
+    with open(path, "wb") as fh:
+        fh.write(b'{"resourceType":"Bundle","type":"collection","total":')
+        fh.write(str(len(resources)).encode())
+        fh.write(b',"entry":[')
+        for i, res in enumerate(resources):
+            if i:
+                fh.write(b",")
+            fh.write(b'{"resource":')
+            fh.write(json.dumps(res, separators=(",", ":")).encode())
+            fh.write(b"}")
+        fh.write(b"]}")
+
+
+def _fetch_patient_bundle_to_file(hapi_url: str, patient: Dict, tmpdir: str):
+    """One bundles-export lane. Returns (filename, path, resource_count)."""
+    resources = _fetch_everything(hapi_url, patient["id"])
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="bundle-", dir=tmpdir)
+    os.close(fd)
+    _write_bundle_file(path, resources)
+    return _patient_filename(patient), path, len(resources)
+
+
+def build_bundles_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
+    """Synthea-style layout: one Bundle file per patient plus provider files.
+    Returns (path, manifest). Empty/None cohort_ids means the whole store."""
+    hapi_url = hapi_url.rstrip("/")
+    cohort_ids = [c for c in (cohort_ids or []) if c]
+    scope_all = not cohort_ids
+    scopes = [None] if scope_all else cohort_ids
+
+    # Patients in scope, deduped across cohorts.
+    patients: Dict[str, Dict] = {}
+    for cohort in scopes:
+        for res in _iter_search(hapi_url, "Patient", _tag_param(cohort)):
+            pid = res.get("id")
+            if pid and pid not in patients:
+                patients[pid] = res
+
+    total_resources = 0
+    provider_counts: Dict[str, int] = {}
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="charm-export-")
+    try:
+        with tempfile.TemporaryDirectory(prefix="charm-export-bundles-") as tmpdir, \
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf, \
+                ThreadPoolExecutor(max_workers=EXPORT_FETCH_WORKERS) as pool:
+            futures = [
+                pool.submit(_fetch_patient_bundle_to_file, hapi_url, p, tmpdir)
+                for p in patients.values()
+            ]
+            for fut in futures:
+                filename, path, n = fut.result()
+                zf.write(path, arcname=filename)
+                os.unlink(path)
+                total_resources += n
+
+            # Provider/reference bundles, mirroring Synthea's special files.
+            for arcname, rtypes in (
+                ("practitionerInformation.json", ["Practitioner", "PractitionerRole"]),
+                ("hospitalInformation.json", ["Organization", "Location"]),
+            ):
+                resources: List[Dict] = []
+                seen: set = set()
+                for rt in rtypes:
+                    for cohort in scopes:
+                        for res in _iter_search(hapi_url, rt, _tag_param(cohort)):
+                            rid = res.get("id")
+                            if rid and rid in seen:
+                                continue
+                            if rid:
+                                seen.add(rid)
+                            resources.append(res)
+                    provider_counts[rt] = sum(
+                        1 for r in resources if r.get("resourceType") == rt)
+                if resources:
+                    fd, ppath = tempfile.mkstemp(suffix=".json", dir=tmpdir)
+                    os.close(fd)
+                    _write_bundle_file(ppath, resources)
+                    zf.write(ppath, arcname=arcname)
+                    os.unlink(ppath)
+                    total_resources += len(resources)
+                logger.info(f"Export: {arcname} — {len(resources)} resources")
+
+            manifest = {
+                "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "source": "CHARMTwinsights FHIR store",
+                "fhir_version": "R4",
+                "format": "per-patient FHIR bundles (Synthea-style layout)",
+                "scope": "all" if scope_all else "cohorts",
+                "cohorts": cohort_ids,
+                "patients": len(patients),
+                "provider_resources": provider_counts,
+                "total_resources": total_resources,
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+            zf.writestr("README.md", _bundles_card(manifest))
     except Exception:
         tmp.close()
         os.unlink(tmp.name)

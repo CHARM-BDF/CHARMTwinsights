@@ -1,7 +1,7 @@
 <template>
   <Wizard
     title="Export FHIR data"
-    subtitle="Download the whole store or selected cohorts as zipped NDJSON — one file per resource type, ready for Hugging Face."
+    subtitle="Download the whole store or selected cohorts as a zip — FHIR NDJSON, per-patient bundles, or a flat CSV table."
     icon="📦"
     accent="#0d9488"
     :steps="steps"
@@ -77,6 +77,17 @@
         </button>
         <button
           class="mode-card"
+          :class="{ selected: data.format === 'bundles' }"
+          @click="data.format = 'bundles'"
+        >
+          <div class="mode-icon">🗃️</div>
+          <div>
+            <div class="mode-title">Per-patient bundles</div>
+            <div class="mode-sub">The layout Synthea generates — one Bundle file per patient, plus provider files</div>
+          </div>
+        </button>
+        <button
+          class="mode-card"
           :class="{ selected: data.format === 'flat' }"
           @click="data.format = 'flat'"
         >
@@ -100,35 +111,20 @@
             <li>~<strong>{{ selectedPatients }}</strong> patients</li>
           </template>
           <li v-if="data.format === 'ndjson'">
-            Format: <strong>zip of NDJSON files</strong>, one per FHIR resource type — full records
-            plus the provider/reference resources they point at, <code>manifest.json</code>
-            (with per-type count verification), and a dataset-card <code>README.md</code>
+            Format: <strong>one NDJSON file per FHIR resource type</strong> — full records
+            plus the provider/reference resources they point at, with <code>manifest.json</code>
+            (per-type count verification) and a <code>README.md</code>
+          </li>
+          <li v-else-if="data.format === 'bundles'">
+            Format: <strong>one FHIR Bundle file per patient</strong> (all of their resources),
+            plus <code>practitionerInformation.json</code> and <code>hospitalInformation.json</code>
+            — the same file structure Synthea generates
           </li>
           <li v-else>
             Format: <strong><code>patients_flat.csv</code></strong> — demographics + indicator
             columns, with <code>data_dictionary.json</code> mapping columns to labels
           </li>
         </ul>
-      </div>
-
-      <div class="hf-note">
-        <div class="hf-note-title">🤗 Hugging Face-ready</div>
-        <p v-if="data.format === 'ndjson'" class="muted" style="margin:0.2rem 0 0.5rem">
-          Each line is one FHIR resource, so the files load directly — and
-          <code>push_to_hub()</code> converts to Parquet automatically:
-        </p>
-        <p v-else class="muted" style="margin:0.2rem 0 0.5rem">
-          A plain CSV: loads anywhere, no feature engineering needed.
-        </p>
-        <pre v-if="data.format === 'ndjson'" class="hf-snippet">from datasets import load_dataset
-
-ds = load_dataset("json", data_files={
-    "patients": "Patient.ndjson",
-    "conditions": "Condition.ndjson",
-})</pre>
-        <pre v-else class="hf-snippet">from datasets import load_dataset
-
-ds = load_dataset("csv", data_files="patients_flat.csv")</pre>
       </div>
 
       <div class="dl-row">
@@ -154,7 +150,7 @@ import { store, goHome } from '../state.js'
 const data = store.flowData.export ?? reactive({
   scope: 'all', // 'all' | 'cohorts'
   cohortIds: [],
-  format: 'ndjson', // 'ndjson' | 'flat'
+  format: 'ndjson', // 'ndjson' | 'bundles' | 'flat'
 })
 store.flowData.export = data
 if (!data.format) data.format = 'ndjson' // sessions restored from before the format option
@@ -308,23 +304,6 @@ watch(
 .summary ul { margin: 0; padding-left: 1.2rem; }
 .summary li { margin-bottom: 0.3rem; }
 
-.hf-note {
-  margin-top: 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.8rem 1rem;
-  background: var(--surface);
-}
-.hf-note-title { font-weight: 600; font-size: 0.9rem; }
-.hf-snippet {
-  margin: 0;
-  padding: 0.6rem 0.8rem;
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  overflow-x: auto;
-}
 
 .dl-row {
   display: flex;
