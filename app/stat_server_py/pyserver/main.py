@@ -770,7 +770,7 @@ from .fhir_utils import FHIRResourceProcessor
 
 # Digital twin finder
 from .twins import TwinFinder, TwinFindRequest, AttributeCountsRequest
-from .export import build_export_zip
+from .export import build_export_zip, build_flat_export_zip
 
 # Create a FHIR resource processor instance
 fhir_processor = None
@@ -802,17 +802,20 @@ async def get_twin_subject_profile(patient_id: str):
 
 
 @app.get("/export/fhir")
-def export_fhir_data(cohort_id: Optional[List[str]] = Query(None)):
+def export_fhir_data(cohort_id: Optional[List[str]] = Query(None),
+                     format: str = Query("ndjson", pattern="^(ndjson|flat)$")):
     """
-    Export the FHIR store as a zip of per-resource-type NDJSON files (FHIR
-    Bulk Data layout, Hugging Face-ready). Repeat ?cohort_id= to scope the
-    export to specific cohorts; omit it to export everything.
+    Export the FHIR store as a zip. format=ndjson (default): FHIR Bulk Data
+    layout, one NDJSON file per resource type. format=flat: one CSV row per
+    patient with 0/1 indicator columns (ML-ready). Repeat ?cohort_id= to
+    scope the export to specific cohorts; omit it to export everything.
 
     Sync endpoint on purpose: FastAPI runs it in the threadpool, so the
     (potentially minutes-long) zip build doesn't block the event loop.
     """
+    builder = build_flat_export_zip if format == "flat" else build_export_zip
     try:
-        path, manifest = build_export_zip(settings.hapi_url, cohort_id)
+        path, manifest = builder(settings.hapi_url, cohort_id)
     except requests.RequestException as e:
         logger.error(f"HAPI error during export: {str(e)}", exc_info=True)
         raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
@@ -822,12 +825,13 @@ def export_fhir_data(cohort_id: Optional[List[str]] = Query(None)):
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     scope = "all" if manifest["scope"] == "all" else "-".join(manifest["cohorts"])[:60]
-    filename = f"charmtwinsights-fhir-{scope}-{stamp}.zip"
+    kind = "flat" if format == "flat" else "fhir"
+    filename = f"charmtwinsights-{kind}-{scope}-{stamp}.zip"
     return FileResponse(
         path,
         media_type="application/zip",
         filename=filename,
-        headers={"X-Export-Total-Resources": str(manifest["total_resources"])},
+        headers={"X-Export-Total-Resources": str(manifest.get("total_resources", manifest.get("patients", 0)))},
         background=BackgroundTask(os.unlink, path),
     )
 

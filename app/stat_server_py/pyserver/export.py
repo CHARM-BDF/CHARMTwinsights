@@ -1,37 +1,64 @@
 """
 FHIR Data Export Module
 
-Builds a zip of the FHIR store — everything, or selected cohorts — in the
-FHIR Bulk Data layout: one newline-delimited JSON file per resource type
-(Patient.ndjson, Condition.ndjson, ...) plus a manifest and a dataset-card
-README. NDJSON is the official FHIR bulk-export format and loads directly
-into Hugging Face datasets:
+Two export formats, both zipped:
 
-    load_dataset("json", data_files={"patients": "Patient.ndjson"})
+- "ndjson" (default): the FHIR Bulk Data layout — one newline-delimited JSON
+  file per resource type, full fidelity, plus manifest.json and a dataset-card
+  README. Loads directly into Hugging Face datasets
+  (load_dataset("json", data_files=...)), and push_to_hub() converts to
+  Parquet automatically.
+- "flat": one CSV row per patient — demographics plus 0/1 indicator columns
+  for every condition / medication / procedure present in the scope, with a
+  data_dictionary.json mapping columns back to display labels. The ML-ready
+  shape (load_dataset("csv", ...)).
 
-Cohort scoping relies on the urn:charm:cohort meta tag, which the ingestion
-and synthea pipelines apply to every resource in a bundle (not just the
-Patient), so a per-type _tag search captures the whole cohort.
+Scoping: cohort exports rely on the urn:charm:cohort meta tag, which the
+generation and ingestion pipelines apply to every resource in a bundle —
+including the Synthea provider bundles (hospitalInformation*/
+practitionerInformation*), so Organization/Practitioner/Location references
+inside patient records resolve within the export.
+
+Paging is _count/_offset/_sort=_id: the explicit sort costs ~2x per page but
+is required for correctness — unsorted offset scans returned unstable
+orderings under load and silently dropped rows. Each type's exported count is
+cross-checked against a _summary=count query and mismatches are reported in
+the manifest.
 """
 
+import csv
+import io
 import json
 import logging
 import os
+import re
 import tempfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
+from .twins import (
+    age_from_birth_date,
+    extract_ethnicity,
+    normalize_label,
+    patient_tags,
+)
 
 logger = logging.getLogger(__name__)
 
 COHORT_TAG_SYSTEM = "urn:charm:cohort"
-PAGE_SIZE = 500
+PAGE_SIZE = 1000
 MAX_RESOURCES_PER_TYPE = 500_000  # runaway-store safety cap, reported in manifest
+# Concurrent per-type fetch lanes for the NDJSON export. Sorted scans are what
+# make the export correct but slow; four lanes bring a ~400k-resource store
+# from ~30 min sequential down to roughly the longest single type.
+EXPORT_FETCH_WORKERS = 4
 
-# Patient-linked types first, then reference data that only a full export
-# includes (they carry no cohort tag).
+# Patient-linked types, then provider/reference data. Both participate in
+# cohort exports (provider bundles are cohort-tagged by the pipelines).
 PATIENT_TYPES = [
     "Patient", "Condition", "MedicationRequest", "MedicationStatement",
     "Procedure", "Observation", "Encounter", "Immunization",
@@ -41,20 +68,25 @@ PATIENT_TYPES = [
 ]
 REFERENCE_TYPES = ["Organization", "Practitioner", "PractitionerRole", "Location"]
 
+# Flat-format categories: (resource types, code element, column prefix)
+FLAT_CATEGORIES = {
+    "conditions": (["Condition"], "code", "cond"),
+    "medications": (["MedicationRequest", "MedicationStatement"], "medicationCodeableConcept", "med"),
+    "procedures": (["Procedure"], "code", "proc"),
+}
+
+
+# ─── paging ───────────────────────────────────────────────────────────────────
 
 def _iter_search(hapi_url: str, resource_type: str, extra_params: List[str],
                  max_items: int = MAX_RESOURCES_PER_TYPE):
-    """Yield resources of one type page by page (stateless _count/_offset
-    paging — no server-side cursor to expire).
-
-    Deliberately unsorted: _sort=_id doubled page latency on the large types,
-    and the caller dedupes by resource id anyway, which absorbs the page-shear
-    duplicates an unsorted offset scan can produce. (Rows written concurrently
-    with the export can still be missed — exports are point-in-time-ish.)"""
+    """Yield resources of one type page by page. _sort=_id pins the row order
+    so offset paging is deterministic and complete (unsorted scans lost rows
+    under load); there is no server-side cursor to expire."""
     offset = 0
     fetched = 0
     while fetched < max_items:
-        params = [f"_count={PAGE_SIZE}", f"_offset={offset}"] + extra_params
+        params = [f"_count={PAGE_SIZE}", f"_offset={offset}", "_sort=_id"] + extra_params
         url = f"{hapi_url}/{resource_type}?{'&'.join(params)}"
         r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=120)
         r.raise_for_status()
@@ -71,28 +103,42 @@ def _iter_search(hapi_url: str, resource_type: str, extra_params: List[str],
         offset += PAGE_SIZE
 
 
-def _chain_first(first: Dict, rest) -> "iter":
-    """Re-attach a peeked first element to its iterator."""
-    yield first
-    yield from rest
+def _count_type(hapi_url: str, resource_type: str, extra_params: List[str]) -> Optional[int]:
+    """Server-side count for one type/scope; None if the query fails."""
+    try:
+        params = ["_summary=count"] + extra_params
+        url = f"{hapi_url}/{resource_type}?{'&'.join(params)}"
+        r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=60)
+        r.raise_for_status()
+        return r.json().get("total")
+    except requests.RequestException as e:
+        logger.warning(f"Count check failed for {resource_type}: {e}")
+        return None
 
 
-def _dataset_card(manifest: Dict) -> str:
-    """README.md for the zip — doubles as a Hugging Face dataset card stub."""
-    scope = manifest["scope"]
-    scope_line = (
-        "the entire FHIR store" if scope == "all"
+def _tag_param(cohort: Optional[str]) -> List[str]:
+    return [f"_tag={COHORT_TAG_SYSTEM}|{cohort}"] if cohort else []
+
+
+# ─── dataset cards ────────────────────────────────────────────────────────────
+
+def _scope_line(manifest: Dict) -> str:
+    return (
+        "the entire FHIR store" if manifest["scope"] == "all"
         else "cohorts: " + ", ".join(f"`{c}`" for c in manifest["cohorts"])
     )
-    counts = "\n".join(
-        f"| {rt} | {n} |" for rt, n in manifest["resource_counts"].items()
-    )
+
+
+def _ndjson_card(manifest: Dict) -> str:
+    counts = "\n".join(f"| {rt} | {n} |" for rt, n in manifest["resource_counts"].items())
     return f"""# CHARMTwinsights FHIR export
 
-Exported {manifest['exported_at']} from {scope_line}.
+Exported {manifest['exported_at']} from {_scope_line(manifest)}.
 
 One newline-delimited JSON file per FHIR resource type (the FHIR Bulk Data
-layout). Each line is one complete FHIR R4 resource.
+layout). Each line is one complete FHIR R4 resource. Provider/reference
+resources (Organization, Practitioner, ...) are included so references inside
+patient records resolve.
 
 | Resource type | Count |
 |---|---|
@@ -110,77 +156,229 @@ ds = load_dataset("json", data_files={{
 ```
 
 `push_to_hub()` converts to Parquet automatically, so this layout uploads
-to the Hub as-is.
-
-Synthetic data generated with Synthea and/or tagged external data —
-see `manifest.json` for scope, counts, and truncation flags.
+to the Hub as-is. See `manifest.json` for scope, counts, and verification.
 """
 
 
+def _flat_card(manifest: Dict) -> str:
+    return f"""# CHARMTwinsights flat patient table
+
+Exported {manifest['exported_at']} from {_scope_line(manifest)}.
+
+`patients_flat.csv` — one row per patient: demographics plus 0/1 indicator
+columns for every condition (`cond_*`), medication (`med_*`), and procedure
+(`proc_*`) observed in the scope. `data_dictionary.json` maps each column to
+its display label and patient count.
+
+- Patients: {manifest['patients']}
+- Indicator columns: {manifest['indicator_columns']}
+
+## Loading with Hugging Face datasets
+
+```python
+from datasets import load_dataset
+
+ds = load_dataset("csv", data_files="patients_flat.csv")
+```
+"""
+
+
+# ─── NDJSON (Bulk Data) export ────────────────────────────────────────────────
+
+def _fetch_type_to_file(hapi_url: str, rt: str, scopes: List[Optional[str]],
+                        tmpdir: str):
+    """One export lane: stream a resource type (sorted pages, deduped by id
+    across cohorts) into a temp NDJSON file — memory stays one page deep.
+    Returns (rt, path or None if empty, count, expected server-side count)."""
+    fd, path = tempfile.mkstemp(suffix=".ndjson", prefix=f"{rt}-", dir=tmpdir)
+    count = 0
+    seen = set()
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            for cohort in scopes:
+                for res in _iter_search(hapi_url, rt, _tag_param(cohort)):
+                    rid = res.get("id")
+                    if rid and rid in seen:
+                        continue
+                    if rid:
+                        seen.add(rid)
+                    fh.write(json.dumps(res, separators=(",", ":")).encode() + b"\n")
+                    count += 1
+    except Exception:
+        os.unlink(path)
+        raise
+    if count == 0:
+        os.unlink(path)
+        path = None
+    # Multi-cohort unions have no single count query to verify against.
+    expected = _count_type(hapi_url, rt, _tag_param(scopes[0])) if len(scopes) == 1 else None
+    return rt, path, count, expected
+
+
 def build_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
-    """Write the export zip to a temp file; returns (path, manifest).
-    Empty/None cohort_ids means the whole store, including reference types."""
+    """Write the Bulk-Data-layout export zip to a temp file; returns
+    (path, manifest). Empty/None cohort_ids means the whole store.
+
+    Types are fetched on EXPORT_FETCH_WORKERS parallel lanes into temp files
+    (disk, not memory) and zipped as each lane finishes, in stable order."""
     hapi_url = hapi_url.rstrip("/")
     cohort_ids = [c for c in (cohort_ids or []) if c]
     scope_all = not cohort_ids
+    scopes = [None] if scope_all else cohort_ids
 
-    resource_types = PATIENT_TYPES + (REFERENCE_TYPES if scope_all else [])
+    resource_types = PATIENT_TYPES + REFERENCE_TYPES
     counts: Dict[str, int] = {}
     truncated: List[str] = []
+    mismatches: List[Dict[str, Any]] = []
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="charm-export-")
     try:
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-            for rt in resource_types:
-                scopes = [None] if scope_all else cohort_ids
-
-                def resources():
-                    # Dedupe by id across cohorts (a resource tagged into
-                    # several requested cohorts) and within a scan (unsorted
-                    # offset paging can repeat rows across page boundaries).
-                    seen = set()
-                    for cohort in scopes:
-                        extra = [f"_tag={COHORT_TAG_SYSTEM}|{cohort}"] if cohort else []
-                        for res in _iter_search(hapi_url, rt, extra):
-                            rid = res.get("id")
-                            if rid and rid in seen:
-                                continue
-                            if rid:
-                                seen.add(rid)
-                            yield res
-
-                # Peek before creating the zip entry so empty types are
-                # omitted entirely; then stream page-sized chunks straight
-                # into the (deflated) entry — the previous version buffered
-                # whole types in memory and OOM-killed the container on a
-                # 400k-resource store.
-                it = resources()
-                first = next(it, None)
-                if first is None:
+        with tempfile.TemporaryDirectory(prefix="charm-export-lanes-") as tmpdir, \
+                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf, \
+                ThreadPoolExecutor(max_workers=EXPORT_FETCH_WORKERS) as pool:
+            futures = [
+                pool.submit(_fetch_type_to_file, hapi_url, rt, scopes, tmpdir)
+                for rt in resource_types
+            ]
+            for fut in futures:
+                rt, path, count, expected = fut.result()
+                if path is None:
                     continue
-                count = 0
-                with zf.open(f"{rt}.ndjson", "w", force_zip64=True) as fh:
-                    for res in _chain_first(first, it):
-                        fh.write(json.dumps(res, separators=(",", ":")).encode() + b"\n")
-                        count += 1
+                zf.write(path, arcname=f"{rt}.ndjson")
+                os.unlink(path)
+                counts[rt] = count
                 if count >= MAX_RESOURCES_PER_TYPE:
                     truncated.append(rt)
-                counts[rt] = count
+                if expected is not None and expected != count:
+                    mismatches.append({"type": rt, "exported": count, "expected": expected})
+                    logger.warning(f"Export count mismatch for {rt}: {count} != {expected}")
                 logger.info(f"Export: {rt} — {count} resources")
 
             manifest = {
                 "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "source": "CHARMTwinsights FHIR store",
                 "fhir_version": "R4",
+                "format": "FHIR Bulk Data NDJSON (one file per resource type)",
                 "scope": "all" if scope_all else "cohorts",
                 "cohorts": cohort_ids,
                 "resource_counts": counts,
                 "total_resources": sum(counts.values()),
                 "truncated_types": truncated,
-                "format": "FHIR Bulk Data NDJSON (one file per resource type)",
+                "count_verification": {"performed": len(scopes) == 1, "mismatches": mismatches},
             }
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-            zf.writestr("README.md", _dataset_card(manifest))
+            zf.writestr("README.md", _ndjson_card(manifest))
+    except Exception:
+        tmp.close()
+        os.unlink(tmp.name)
+        raise
+    tmp.close()
+    return tmp.name, manifest
+
+
+# ─── flat (ML-ready) export ───────────────────────────────────────────────────
+
+def _slug(normalized_label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", normalized_label).strip("_")[:60] or "unnamed"
+
+
+def build_flat_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
+    """One CSV row per patient: demographics + 0/1 indicator columns for every
+    clinical attribute in scope. Returns (path, manifest)."""
+    hapi_url = hapi_url.rstrip("/")
+    cohort_ids = [c for c in (cohort_ids or []) if c]
+    scope_all = not cohort_ids
+    scopes = [None] if scope_all else cohort_ids
+
+    # Patients, deduped across cohorts.
+    patients: Dict[str, Dict] = {}
+    for cohort in scopes:
+        for res in _iter_search(hapi_url, "Patient", _tag_param(cohort)):
+            pid = res.get("id")
+            if pid and pid not in patients:
+                patients[pid] = res
+
+    # Per-patient normalized-label sets per category (slim _elements fetch).
+    label_sets: Dict[str, Dict[str, set]] = {cat: {} for cat in FLAT_CATEGORIES}
+    display: Dict[str, Dict[str, str]] = {cat: {} for cat in FLAT_CATEGORIES}
+    for cat, (rtypes, code_field, _prefix) in FLAT_CATEGORIES.items():
+        for rt in rtypes:
+            for cohort in scopes:
+                extra = _tag_param(cohort) + [f"_elements=subject,{code_field}"]
+                for res in _iter_search(hapi_url, rt, extra):
+                    ref = (res.get("subject") or {}).get("reference", "")
+                    if not ref.startswith("Patient/"):
+                        continue
+                    pid = ref.split("/", 1)[1]
+                    if pid not in patients:
+                        continue
+                    concept = res.get(code_field) or {}
+                    label = concept.get("text") or next(
+                        (c.get("display") for c in concept.get("coding", []) or [] if c.get("display")), None)
+                    if not label:
+                        continue
+                    norm = normalize_label(label)
+                    label_sets[cat].setdefault(pid, set()).add(norm)
+                    display[cat].setdefault(norm, label)
+
+    # Columns: per category, sorted by prevalence (desc) then name.
+    columns: List[Tuple[str, str, str]] = []  # (column, category, normalized label)
+    dictionary: Dict[str, Dict[str, Any]] = {}
+    for cat, (_rt, _cf, prefix) in FLAT_CATEGORIES.items():
+        prevalence = {
+            norm: sum(1 for s in label_sets[cat].values() if norm in s)
+            for norm in display[cat]
+        }
+        for norm in sorted(display[cat], key=lambda n: (-prevalence[n], n)):
+            col = base = f"{prefix}_{_slug(norm)}"
+            i = 2
+            while col in dictionary:  # slug collision
+                col = f"{base}_{i}"
+                i += 1
+            dictionary[col] = {"category": cat, "label": display[cat][norm], "patients": prevalence[norm]}
+            columns.append((col, cat, norm))
+
+    demo_cols = ["patient_id", "gender", "birth_date", "age", "ethnicity", "cohorts", "datatype"]
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="charm-export-")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            with zf.open("patients_flat.csv", "w", force_zip64=True) as raw:
+                text = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+                writer = csv.writer(text)
+                writer.writerow(demo_cols + [c for c, _cat, _n in columns])
+                for pid, p in patients.items():
+                    tags = patient_tags(p)
+                    row = [
+                        pid,
+                        p.get("gender") or "",
+                        p.get("birthDate") or "",
+                        age_from_birth_date(p.get("birthDate")),
+                        extract_ethnicity(p) or "",
+                        ";".join(tags.get("cohort_ids", [])),
+                        tags.get("datatype") or "",
+                    ]
+                    row += [
+                        1 if norm in label_sets[cat].get(pid, set()) else 0
+                        for (_col, cat, norm) in columns
+                    ]
+                    writer.writerow(row)
+                text.flush()
+                text.detach()  # keep the underlying zip stream open for zipfile to close
+
+            manifest = {
+                "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "source": "CHARMTwinsights FHIR store",
+                "format": "flat patient table (CSV, 0/1 indicators)",
+                "scope": "all" if scope_all else "cohorts",
+                "cohorts": cohort_ids,
+                "patients": len(patients),
+                "indicator_columns": len(columns),
+                "demographic_columns": demo_cols,
+            }
+            zf.writestr("data_dictionary.json", json.dumps(dictionary, indent=2))
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+            zf.writestr("README.md", _flat_card(manifest))
     except Exception:
         tmp.close()
         os.unlink(tmp.name)

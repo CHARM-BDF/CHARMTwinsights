@@ -21,12 +21,13 @@ BACKEND_URL = settings.stat_server_py_url.rstrip("/")
 
 
 @router.get("/fhir")
-async def proxy_export_fhir(cohort_id: List[str] = Query(default=[])):
-    """Zip of per-resource-type NDJSON (FHIR Bulk Data layout). Repeat
-    ?cohort_id= to export specific cohorts; omit for the whole store.
-    Streamed through so multi-hundred-MB exports never buffer in the router."""
+async def proxy_export_fhir(cohort_id: List[str] = Query(default=[]),
+                            format: str = Query("ndjson")):
+    """Zip export: format=ndjson (Bulk Data layout) or format=flat (one CSV
+    row per patient). Repeat ?cohort_id= to export specific cohorts; omit for
+    the whole store. Streamed through so large exports never buffer here."""
     url = f"{BACKEND_URL}/export/fhir"
-    params = [("cohort_id", c) for c in cohort_id]
+    params = [("cohort_id", c) for c in cohort_id] + [("format", format)]
     client = httpx.AsyncClient(timeout=httpx.Timeout(1800.0, connect=10.0))
     try:
         req = client.build_request("GET", url, params=params)

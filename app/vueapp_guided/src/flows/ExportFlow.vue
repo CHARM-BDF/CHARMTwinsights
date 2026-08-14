@@ -59,38 +59,76 @@
       </p>
     </template>
 
-    <!-- ═══════════════ Step 1: Download ═══════════════ -->
+    <!-- ═══════════════ Step 1: Format & download ═══════════════ -->
     <template #step-1>
-      <h2>Review &amp; download</h2>
+      <h2>Format &amp; download</h2>
+
+      <div class="mode-grid">
+        <button
+          class="mode-card"
+          :class="{ selected: data.format === 'ndjson' }"
+          @click="data.format = 'ndjson'"
+        >
+          <div class="mode-icon">🧬</div>
+          <div>
+            <div class="mode-title">FHIR NDJSON</div>
+            <div class="mode-sub">Full fidelity — one file per resource type (Bulk Data layout), providers included</div>
+          </div>
+        </button>
+        <button
+          class="mode-card"
+          :class="{ selected: data.format === 'flat' }"
+          @click="data.format = 'flat'"
+        >
+          <div class="mode-icon">📊</div>
+          <div>
+            <div class="mode-title">Flat table (CSV)</div>
+            <div class="mode-sub">ML-ready — one row per patient, 0/1 columns per condition/medication/procedure</div>
+          </div>
+        </button>
+      </div>
 
       <div class="summary">
         <h3>About to export</h3>
         <ul>
           <li v-if="data.scope === 'all'">
             <strong>Everything</strong> — all cohorts
-            <template v-if="totalPatients != null"> (~<strong>{{ totalPatients }}</strong> patients)</template>,
-            clinical records, and reference data
+            <template v-if="totalPatients != null"> (~<strong>{{ totalPatients }}</strong> patients)</template>
           </li>
           <template v-else>
             <li><strong>{{ data.cohortIds.length }}</strong> cohort(s): <code>{{ data.cohortIds.join(', ') }}</code></li>
-            <li>~<strong>{{ selectedPatients }}</strong> patients and every resource tagged into those cohorts</li>
+            <li>~<strong>{{ selectedPatients }}</strong> patients</li>
           </template>
-          <li>Format: <strong>zip of NDJSON files</strong>, one per FHIR resource type (Bulk Data layout), with <code>manifest.json</code> and a dataset-card <code>README.md</code></li>
+          <li v-if="data.format === 'ndjson'">
+            Format: <strong>zip of NDJSON files</strong>, one per FHIR resource type — full records
+            plus the provider/reference resources they point at, <code>manifest.json</code>
+            (with per-type count verification), and a dataset-card <code>README.md</code>
+          </li>
+          <li v-else>
+            Format: <strong><code>patients_flat.csv</code></strong> — demographics + indicator
+            columns, with <code>data_dictionary.json</code> mapping columns to labels
+          </li>
         </ul>
       </div>
 
       <div class="hf-note">
         <div class="hf-note-title">🤗 Hugging Face-ready</div>
-        <p class="muted" style="margin:0.2rem 0 0.5rem">
+        <p v-if="data.format === 'ndjson'" class="muted" style="margin:0.2rem 0 0.5rem">
           Each line is one FHIR resource, so the files load directly — and
           <code>push_to_hub()</code> converts to Parquet automatically:
         </p>
-        <pre class="hf-snippet">from datasets import load_dataset
+        <p v-else class="muted" style="margin:0.2rem 0 0.5rem">
+          A plain CSV: loads anywhere, no feature engineering needed.
+        </p>
+        <pre v-if="data.format === 'ndjson'" class="hf-snippet">from datasets import load_dataset
 
 ds = load_dataset("json", data_files={
     "patients": "Patient.ndjson",
     "conditions": "Condition.ndjson",
 })</pre>
+        <pre v-else class="hf-snippet">from datasets import load_dataset
+
+ds = load_dataset("csv", data_files="patients_flat.csv")</pre>
       </div>
 
       <div class="dl-row">
@@ -116,8 +154,10 @@ import { store, goHome } from '../state.js'
 const data = store.flowData.export ?? reactive({
   scope: 'all', // 'all' | 'cohorts'
   cohortIds: [],
+  format: 'ndjson', // 'ndjson' | 'flat'
 })
 store.flowData.export = data
+if (!data.format) data.format = 'ndjson' // sessions restored from before the format option
 
 const downloadStarted = ref(false)
 
@@ -151,9 +191,11 @@ const selectedPatients = computed(() =>
 )
 
 const exportUrl = computed(() => {
-  if (data.scope === 'all') return `${store.apiBase}/export/fhir`
-  const qs = data.cohortIds.map((c) => `cohort_id=${encodeURIComponent(c)}`).join('&')
-  return `${store.apiBase}/export/fhir?${qs}`
+  const parts = data.scope === 'all'
+    ? []
+    : data.cohortIds.map((c) => `cohort_id=${encodeURIComponent(c)}`)
+  parts.push(`format=${data.format}`)
+  return `${store.apiBase}/export/fhir?${parts.join('&')}`
 })
 
 // ─── steps ───────────────────────────────────────────────────────────────────
@@ -163,7 +205,7 @@ const steps = reactive([
 ])
 
 watch(
-  [() => data.scope, () => data.cohortIds.length],
+  [() => data.scope, () => data.cohortIds.length, () => data.format],
   () => {
     steps[0].canAdvance = data.scope === 'all' || data.cohortIds.length > 0
     downloadStarted.value = false
