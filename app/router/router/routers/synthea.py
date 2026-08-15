@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Path, BackgroundTasks, Body
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator, ConfigDict
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 import httpx
 import logging
@@ -137,9 +137,11 @@ async def delete_cohort(cohort_id: str):
         A JSON object containing a message with the number of patients deleted.
     """
     url = f"{settings.synthea_server_url}/delete-cohort/{cohort_id}"
-    
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # A full trace sweep (patients + clinical records + provider
+        # resources) on a large cohort can take minutes.
+        async with httpx.AsyncClient(timeout=1800.0) as client:
             resp = await client.delete(url)
             resp.raise_for_status()
             return resp.json()
@@ -149,6 +151,29 @@ async def delete_cohort(cohort_id: str):
         raise HTTPException(status_code=e.response.status_code, detail=detail)
     except httpx.RequestError as e:
         logger.error(f"Error deleting cohort {cohort_id}: {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+@router.post("/cleanup-deleted-cohorts", response_class=JSONResponse)
+async def cleanup_deleted_cohorts(cohort_id: Optional[List[str]] = Query(None)):
+    """
+    Remove leftovers of previously deleted cohorts: resources still tagged
+    with cohort ids whose Group no longer exists. Scans the whole store, so
+    it can take several minutes.
+    """
+    url = f"{settings.synthea_server_url}/cleanup-deleted-cohorts"
+
+    try:
+        async with httpx.AsyncClient(timeout=1800.0) as client:
+            resp = await client.post(url, params=[("cohort_id", c) for c in (cohort_id or [])])
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea error (cleanup-deleted-cohorts): {e.response.text}")
+        detail = e.response.text or "Error cleaning up deleted cohorts"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error cleaning up deleted cohorts: {e}")
         raise HTTPException(status_code=500, detail="Synthea server unreachable")
 
 

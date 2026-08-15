@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 import pandas as pd
 import os
@@ -8,6 +8,7 @@ import shutil
 import json
 import glob
 import requests
+import time
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, List, Set
@@ -2493,8 +2494,141 @@ async def get_random_patient_pdf():
         return JSONResponse(status_code=500, content={"error": f"Error generating PDF: {str(e)}"})
 
 
+# Every resource type the generation/ingestion pipelines cohort-tag. A cohort
+# delete must sweep all of them — deleting only Patients leaves tens of
+# thousands of orphaned clinical and provider resources per cohort.
+COHORT_TRACE_TYPES = [
+    "Patient", "Condition", "MedicationRequest", "MedicationStatement",
+    "Procedure", "Observation", "Encounter", "Immunization",
+    "AllergyIntolerance", "DiagnosticReport", "DocumentReference",
+    "CarePlan", "CareTeam", "Claim", "ExplanationOfBenefit",
+    "SupplyDelivery", "Device", "ImagingStudy", "Medication",
+    "Organization", "Practitioner", "PractitionerRole", "Location",
+    "Provenance",
+]
+COHORT_TAG_SYSTEM_URN = "urn:charm:cohort"
+
+
+def _live_cohort_ids(hapi_url):
+    """Cohort ids that still exist, i.e. have a Group resource."""
+    ids = set()
+    next_url = f"{hapi_url.rstrip('/')}/Group?_count=500&_elements=id"
+    while next_url:
+        r = requests.get(next_url, headers={"Accept": "application/fhir+json"}, timeout=30)
+        r.raise_for_status()
+        bundle = r.json()
+        for entry in bundle.get("entry", []) or []:
+            res = entry.get("resource") or {}
+            if res.get("id"):
+                ids.add(res["id"])
+        next_url = next((l.get("url") for l in bundle.get("link", []) or []
+                         if l.get("relation") == "next"), None)
+    return ids
+
+
+def _strip_cohort_tags(hapi_url, resource_type, resource_id, codes):
+    """Remove specific cohort tags from one resource via $meta-delete."""
+    body = {
+        "resourceType": "Parameters",
+        "parameter": [{
+            "name": "meta",
+            "valueMeta": {"tag": [
+                {"system": COHORT_TAG_SYSTEM_URN, "code": c} for c in codes
+            ]},
+        }],
+    }
+    r = requests.post(
+        f"{hapi_url}/{resource_type}/{resource_id}/$meta-delete",
+        json=body, headers={"Accept": "application/fhir+json"}, timeout=30)
+    r.raise_for_status()
+
+
+def sweep_cohort_traces(hapi_url, dead_cohorts, live_cohorts):
+    """Remove every trace of the given dead cohorts.
+
+    Per resource carrying a dead cohort tag: if it is also tagged into a live
+    cohort (possible for re-ingested data), only the dead tags are stripped;
+    otherwise the resource is deleted. Uses the drain pattern — refetch the
+    first search page until empty — so paging is immune to the deletions
+    shifting offsets.
+
+    Returns {"deleted": {type: n}, "tags_stripped": {type: n}, "failed": n}.
+    """
+    dead_cohorts = set(dead_cohorts)
+    live_cohorts = set(live_cohorts) - dead_cohorts
+    deleted, stripped, failed = {}, {}, 0
+
+    def _fetch_page(url):
+        # A single failed page fetch must not kill a sweep that has already
+        # deleted thousands of resources — retry, then give up on this lane.
+        for attempt in range(3):
+            try:
+                r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=120)
+                r.raise_for_status()
+                return r.json()
+            except Exception as e:
+                logger.warning(f"Sweep page fetch retry {attempt + 1}/3 for {url.split('?')[0]}: {e}")
+                time.sleep(2 * (attempt + 1))
+        return None
+
+    for rt in COHORT_TRACE_TYPES:
+        for cohort in dead_cohorts:
+            for _page in range(1000):  # drain guard
+                url = (f"{hapi_url}/{rt}?_tag={COHORT_TAG_SYSTEM_URN}|{cohort}"
+                       f"&_count=500&_elements=meta")
+                bundle = _fetch_page(url)
+                if bundle is None:
+                    failed += 1
+                    break  # skip this type+cohort lane, keep sweeping the rest
+                entries = [e.get("resource") for e in (bundle.get("entry") or [])]
+                entries = [res for res in entries if res and res.get("id")]
+                if not entries:
+                    break
+                progressed = False
+                to_delete = []
+                for res in entries:
+                    codes = {t.get("code") for t in (res.get("meta", {}).get("tag") or [])
+                             if t.get("system") == COHORT_TAG_SYSTEM_URN and t.get("code")}
+                    dead_here = codes & dead_cohorts or {cohort}
+                    if codes & live_cohorts:
+                        try:
+                            _strip_cohort_tags(hapi_url, rt, res["id"], sorted(dead_here))
+                            stripped[rt] = stripped.get(rt, 0) + 1
+                            progressed = True
+                        except Exception as e:
+                            failed += 1
+                            logger.error(f"Tag strip failed for {rt}/{res['id']}: {e}")
+                    else:
+                        to_delete.append(res["id"])
+
+                # One transaction bundle deletes the whole page — individual
+                # DELETEs at this volume saturate HAPI for everyone else.
+                if to_delete:
+                    tx = {"resourceType": "Bundle", "type": "transaction", "entry": [
+                        {"request": {"method": "DELETE", "url": f"{rt}/{rid}"}}
+                        for rid in to_delete
+                    ]}
+                    try:
+                        tr = requests.post(hapi_url, json=tx,
+                                           headers={"Accept": "application/fhir+json",
+                                                    "Content-Type": "application/fhir+json"},
+                                           timeout=300)
+                        tr.raise_for_status()
+                        deleted[rt] = deleted.get(rt, 0) + len(to_delete)
+                        progressed = True
+                    except Exception as e:
+                        failed += len(to_delete)
+                        logger.error(
+                            f"Batch delete of {len(to_delete)} {rt} failed: {str(e)[:200]}")
+                if not progressed:
+                    break  # page of pure failures — avoid spinning forever
+    return {"deleted": deleted, "tags_stripped": stripped, "failed": failed}
+
+
 @app.delete("/delete-cohort/{cohort_id}", response_class=JSONResponse)
-async def delete_cohort(cohort_id: str):
+def delete_cohort(cohort_id: str):
+    # Sync on purpose: FastAPI threadpools it, so the minutes-long blocking
+    # trace sweep does not freeze the event loop (and every other endpoint).
     """ Deletes a cohort from the HAPI FHIR server, including all patients with the cohort's tag.
     Args:
         cohort_id: The ID of the cohort to delete.
@@ -2510,80 +2644,129 @@ async def delete_cohort(cohort_id: str):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable. (It may be starting up.)"})
     
-    # Try to fetch the Group resource
+    # A cohort is deletable if its Group still exists OR tagged resources
+    # remain (a previous partial delete may have removed the Group already).
     group = fetch_group_by_id(hapi_url, cohort_id)
-    if not group:
+    tagged_probe = requests.get(
+        f"{hapi_url}/Patient?_tag={COHORT_TAG_SYSTEM_URN}|{cohort_id}&_summary=count",
+        headers={"Accept": "application/fhir+json"}, timeout=30)
+    tagged_patients = tagged_probe.json().get("total", 0) if tagged_probe.ok else 0
+    if not group and not tagged_patients:
         return JSONResponse(status_code=404, content={"error": f"Cohort with ID '{cohort_id}' not found."})
-    
-    # Get patients from the group's member list
-    group_patient_ids = []
-    if "member" in group:
-        group_patient_ids = [member.get("entity", {}).get("reference", "").replace("Patient/", "") 
-                           for member in group["member"] if "entity" in member]
-        group_patient_ids = set([pid for pid in group_patient_ids if pid])  # Remove empty IDs
-    
-    # Find all patients with this cohort tag
-    tag_patient_ids = []
-    try:
-        # For FHIR search, we need to use the system|code format
-        cohort_tag = f"urn:charm:cohort|{cohort_id}"
-        
-        # Get all patients with this cohort tag
-        url = f"{hapi_url}/Patient?_tag={cohort_tag}&_count=5000"
-        r = requests.get(url)
-        r.raise_for_status()
-        
-        # Extract patient IDs from the search results
-        tagged_patients = r.json()
-        if "entry" in tagged_patients:
-            for entry in tagged_patients["entry"]:
-                if "resource" in entry and entry["resource"].get("resourceType") == "Patient":
-                    patient_id = entry["resource"].get("id")
-                    if patient_id and patient_id not in tag_patient_ids:
-                        tag_patient_ids.append(patient_id)
-    except Exception as e:
-        logger.error(f"Error finding patients with cohort tag: {str(e)}")
-    
-    # Use only the tag-based patient IDs for deletion, as they're more reliable
-    # The Group resource might contain references to patients that no longer exist
-    # or that don't actually have the cohort tag
-    patient_ids = tag_patient_ids
-    
-    # Log the counts for debugging
-    logger.info(f"Cohort {cohort_id}: {len(group_patient_ids)} patients in group, {len(tag_patient_ids)} patients with tag")
-    
-    # Delete each patient
-    deleted_count = 0
-    failed_count = 0
-    try:
-        for patient_id in patient_ids:
-            try:
-                delete_url = f"{hapi_url}/Patient/{patient_id}"
-                delete_r = requests.delete(delete_url)
-                delete_r.raise_for_status()
-                deleted_count += 1
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Failed to delete patient {patient_id}: {str(e)}")
-    
-    except Exception as e:
-        logger.error(f"Error deleting patients: {str(e)}")
-        # Continue to delete the group even if patient deletion had issues
-    
-    # Delete the Group resource
-    url = f"{hapi_url.rstrip('/')}/Group/{cohort_id}"
-    try:
-        r = requests.delete(url)
-        r.raise_for_status()
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Error deleting cohort group: {str(e)}"})
-    
+
+    # Sweep every trace: patients, their clinical records, and provider
+    # resources tagged into this cohort. Resources shared with a live cohort
+    # only get this cohort's tag stripped.
+    live = _live_cohort_ids(hapi_url) - {cohort_id}
+    stats = sweep_cohort_traces(hapi_url, {cohort_id}, live)
+
+    # Delete the Group resource (if it still exists)
+    if group:
+        try:
+            r = requests.delete(f"{hapi_url.rstrip('/')}/Group/{cohort_id}", timeout=30)
+            r.raise_for_status()
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Error deleting cohort group: {str(e)}"})
+
+    deleted_count = stats["deleted"].get("Patient", 0)
+    total_traces = sum(stats["deleted"].values())
+    total_stripped = sum(stats["tags_stripped"].values())
     return {
-        "message": f"Successfully deleted cohort '{cohort_id}' with {len(patient_ids)} patients ({deleted_count} deleted, {failed_count} failed).",
+        "message": (
+            f"Successfully deleted cohort '{cohort_id}': {deleted_count} patients and "
+            f"{total_traces - deleted_count} linked resources removed"
+            + (f", {total_stripped} shared resources untagged" if total_stripped else "")
+            + (f", {stats['failed']} failures" if stats["failed"] else "") + "."
+        ),
         "cohort_id": cohort_id,
         "patients_deleted": deleted_count,
-        "patients_failed": failed_count,
-        "total_patients": len(patient_ids)
+        "patients_failed": stats["failed"],
+        "total_patients": tagged_patients,
+        "traces": stats,
+    }
+
+
+@app.post("/cleanup-deleted-cohorts", response_class=JSONResponse)
+def cleanup_deleted_cohorts(cohort_id: Optional[List[str]] = Query(None)):
+    """Remove leftovers of cohorts deleted before trace-sweeping existed:
+    scans the store for resources tagged with cohort ids that no longer have
+    a Group, deletes them (or strips the dead tags off resources shared with
+    live cohorts), and finishes with a best-effort $expunge so HAPI reclaims
+    the space of soft-deleted versions.
+
+    Pass ?cohort_id= (repeatable) to target known dead cohorts directly and
+    skip the store-wide discovery scan. Ids that still have a Group are
+    refused rather than swept.
+    """
+    hapi_url = "http://hapi:8080/fhir"
+    try:
+        r = requests.get(hapi_url + "/$meta", timeout=10)
+        r.raise_for_status()
+    except Exception:
+        return JSONResponse(status_code=500, content={"error": "HAPI FHIR server is not reachable."})
+
+    live = _live_cohort_ids(hapi_url)
+
+    if cohort_id:
+        requested = {c for c in cohort_id if c}
+        still_live = sorted(requested & live)
+        if still_live:
+            return JSONResponse(status_code=400, content={
+                "error": f"Refusing to sweep live cohorts: {', '.join(still_live)}. "
+                         f"Delete them via delete-cohort first."})
+        dead = requested
+        return _finish_cleanup(hapi_url, dead, live)
+
+    # Discover dead cohort tags with a slim scan over every tagged type.
+    dead = set()
+    for rt in COHORT_TRACE_TYPES:
+        offset = 0
+        while True:
+            url = (f"{hapi_url}/{rt}?_count=1000&_offset={offset}&_sort=_id"
+                   f"&_elements=meta")
+            r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=120)
+            r.raise_for_status()
+            bundle = r.json()
+            for entry in bundle.get("entry", []) or []:
+                for t in ((entry.get("resource") or {}).get("meta", {}).get("tag") or []):
+                    if t.get("system") == COHORT_TAG_SYSTEM_URN and t.get("code"):
+                        if t["code"] not in live:
+                            dead.add(t["code"])
+            if not any(l.get("relation") == "next" for l in bundle.get("link", []) or []):
+                break
+            offset += 1000
+
+    return _finish_cleanup(hapi_url, dead, live)
+
+
+def _finish_cleanup(hapi_url, dead, live):
+    """Sweep the dead cohorts, then best-effort $expunge; build the response."""
+    stats = {"deleted": {}, "tags_stripped": {}, "failed": 0}
+    if dead:
+        stats = sweep_cohort_traces(hapi_url, dead, live)
+
+    # Best-effort expunge of soft-deleted versions (needs expunge enabled).
+    expunge = {"attempted": True, "ok": False}
+    try:
+        body = {"resourceType": "Parameters", "parameter": [
+            {"name": "expungeDeletedResources", "valueBoolean": True},
+            {"name": "expungePreviousVersions", "valueBoolean": True},
+            {"name": "limit", "valueInteger": 100000},
+        ]}
+        er = requests.post(f"{hapi_url}/$expunge", json=body,
+                           headers={"Accept": "application/fhir+json"}, timeout=600)
+        er.raise_for_status()
+        expunge["ok"] = True
+    except Exception as e:
+        expunge["detail"] = str(e)[:300]
+
+    return {
+        "dead_cohorts": sorted(dead),
+        "resources_deleted": sum(stats["deleted"].values()),
+        "tags_stripped": sum(stats["tags_stripped"].values()),
+        "failed": stats["failed"],
+        "by_type": stats["deleted"],
+        "expunge": expunge,
     }
 
 @app.post("/generate-download-synthetic-patients", response_class=JSONResponse)

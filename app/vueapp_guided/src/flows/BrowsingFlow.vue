@@ -67,6 +67,32 @@
             <span class="chevron">›</span>
           </button>
         </div>
+
+        <!-- store maintenance: leftovers of cohorts deleted before the
+             full trace sweep existed -->
+        <div class="maint-row">
+          <button
+            v-if="cleanupState === 'idle' && !cleanupConfirm"
+            class="ghost small-btn"
+            @click="cleanupConfirm = true"
+          >🧹 Clean up leftovers of deleted cohorts</button>
+          <template v-if="cleanupConfirm && cleanupState === 'idle'">
+            <span class="muted" style="font-size:0.85rem">
+              Scans the whole store for resources still tagged to cohorts that no longer
+              exist and removes them. Can take a few minutes. Continue?
+            </span>
+            <button class="danger-btn" @click="runCleanup">Yes, clean up</button>
+            <button class="ghost small-btn" @click="cleanupConfirm = false">Cancel</button>
+          </template>
+          <span v-if="cleanupState === 'running'" class="state-msg" style="padding:0">
+            <span class="spinner"></span> Cleaning up — scanning the whole store…
+          </span>
+          <div v-if="cleanupState === 'done'" class="alert-ok" style="margin:0">✓ {{ cleanupSummary }}</div>
+          <div v-if="cleanupState === 'error'" class="alert-err" style="margin:0">
+            ✗ {{ cleanupError }}
+            <button class="ghost small-btn" style="margin-left:0.6rem" @click="cleanupState = 'idle'">Dismiss</button>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -161,7 +187,7 @@
         <details class="danger-zone">
           <summary>Danger zone</summary>
           <div style="padding:0.8rem 0 0">
-            <p class="muted" style="margin-bottom:0.6rem">Permanently deletes the cohort and all its patients from the FHIR store.</p>
+            <p class="muted" style="margin-bottom:0.6rem">Permanently deletes the cohort with all its patients, clinical records, and provider resources (shared resources are only untagged).</p>
             <button v-if="deleteState === 'idle'" class="danger-btn" @click="confirmDelete = true">🗑 Delete cohort</button>
             <div v-if="confirmDelete && deleteState === 'idle'" class="confirm-row">
               <span class="muted">Are you sure? This cannot be undone.</span>
@@ -431,6 +457,36 @@ async function loadCohorts() {
 }
 
 onMounted(loadCohorts)
+
+// ─── deleted-cohort leftovers cleanup ────────────────────────────────────────
+const cleanupConfirm = ref(false)
+const cleanupState = ref('idle') // idle | running | done | error
+const cleanupSummary = ref('')
+const cleanupError = ref('')
+
+async function runCleanup() {
+  cleanupConfirm.value = false
+  cleanupState.value = 'running'
+  try {
+    const { data: resp } = await axios.post(
+      `${store.apiBase}/synthetic/synthea/cleanup-deleted-cohorts`,
+      null,
+      { timeout: 1800_000 },
+    )
+    const dead = resp.dead_cohorts?.length ?? 0
+    cleanupSummary.value = dead
+      ? `Removed traces of ${dead} deleted cohort(s): ${resp.resources_deleted} resources deleted`
+        + (resp.tags_stripped ? `, ${resp.tags_stripped} shared resources untagged` : '')
+        + (resp.failed ? ` (${resp.failed} failures)` : '')
+        + (resp.expunge?.ok ? ' — storage expunged.' : '.')
+      : 'No leftovers found — the store is clean.'
+    cleanupState.value = 'done'
+    await loadCohorts()
+  } catch (e) {
+    cleanupError.value = e?.response?.data?.detail ?? e.message ?? 'Cleanup failed'
+    cleanupState.value = 'error'
+  }
+}
 
 // ─── patients ────────────────────────────────────────────────────────────────
 const allPatients    = ref([])
@@ -995,6 +1051,17 @@ function selectCohort(c) {
   font-weight: 600;
   color: var(--text-muted);
   background: var(--surface-alt);
+}
+
+/* ─── maintenance row ─── */
+.maint-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+  padding-top: 0.7rem;
+  border-top: 1px dashed var(--border);
 }
 
 /* ─── sort bar ─── */
