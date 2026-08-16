@@ -770,7 +770,9 @@ from .fhir_utils import FHIRResourceProcessor
 
 # Digital twin finder
 from .twins import TwinFinder, TwinFindRequest, AttributeCountsRequest
-from .export import build_export_zip, build_flat_export_zip, build_bundles_export_zip
+from .export import (build_export_zip, build_flat_export_zip,
+                      build_bundles_export_zip, build_combined_export_zip,
+                      FORMAT_WRITERS)
 
 # Create a FHIR resource processor instance
 fhir_processor = None
@@ -803,24 +805,29 @@ async def get_twin_subject_profile(patient_id: str):
 
 @app.get("/export/fhir")
 def export_fhir_data(cohort_id: Optional[List[str]] = Query(None),
-                     format: str = Query("ndjson", pattern="^(ndjson|bundles|flat)$")):
+                     format: Optional[List[str]] = Query(None)):
     """
-    Export the FHIR store as a zip. format=ndjson (default): FHIR Bulk Data
-    layout, one NDJSON file per resource type. format=bundles: Synthea-style
-    layout, one Bundle file per patient plus provider files. format=flat:
-    one CSV row per patient with 0/1 indicator columns. Repeat ?cohort_id=
-    to scope the export to specific cohorts; omit it to export everything.
+    Export the FHIR store as a zip. Formats (repeat ?format= for several in
+    one archive): ndjson (default) — FHIR Bulk Data layout, one NDJSON file
+    per resource type; bundles — Synthea-style layout, one Bundle file per
+    patient plus provider files; flat — one CSV row per patient with 0/1
+    indicator columns. With several formats each lands under its own
+    directory. Repeat ?cohort_id= to scope the export to specific cohorts;
+    omit it to export everything.
 
     Sync endpoint on purpose: FastAPI runs it in the threadpool, so the
     (potentially minutes-long) zip build doesn't block the event loop.
     """
-    builder = {
-        "ndjson": build_export_zip,
-        "bundles": build_bundles_export_zip,
-        "flat": build_flat_export_zip,
-    }[format]
+    # Accept repeated params and comma-separated values alike.
+    requested = [f.strip() for raw in (format or ["ndjson"]) for f in raw.split(",") if f.strip()]
+    unknown = [f for f in requested if f not in FORMAT_WRITERS]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown export format(s): {', '.join(unknown)}. "
+                   f"Valid: {', '.join(FORMAT_WRITERS)}")
     try:
-        path, manifest = builder(settings.hapi_url, cohort_id)
+        path, manifest = build_combined_export_zip(settings.hapi_url, cohort_id, requested)
     except requests.RequestException as e:
         logger.error(f"HAPI error during export: {str(e)}", exc_info=True)
         raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
@@ -830,7 +837,8 @@ def export_fhir_data(cohort_id: Optional[List[str]] = Query(None),
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     scope = "all" if manifest["scope"] == "all" else "-".join(manifest["cohorts"])[:60]
-    kind = {"ndjson": "fhir", "bundles": "bundles", "flat": "flat"}[format]
+    kinds = {"ndjson": "fhir", "bundles": "bundles", "flat": "flat"}
+    kind = "-".join(kinds[f] for f in FORMAT_WRITERS if f in requested)
     filename = f"charmtwinsights-{kind}-{scope}-{stamp}.zip"
     return FileResponse(
         path,

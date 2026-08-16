@@ -175,6 +175,66 @@ with patch("pyserver.export._iter_search", fake_iter), \
     finally:
         os.unlink(path5)
 
+# ── combined (multi-format) export ───────────────────────────────────────────
+from pyserver.export import build_combined_export_zip, FORMAT_WRITERS
+
+with patch("pyserver.export._iter_search", fake_iter), \
+     patch("pyserver.export._count_type", fake_count), \
+     patch("pyserver.export._fetch_everything", fake_everything):
+
+    # single format via the combined builder keeps the flat root layout
+    path6, m6 = build_combined_export_zip("http://fake", None, ["flat"])
+    try:
+        with zipfile.ZipFile(path6) as zf:
+            check("single format stays at zip root", "patients_flat.csv" in zf.namelist())
+            check("single format manifest is the format's own", m6["format"].startswith("flat"))
+    finally:
+        os.unlink(path6)
+
+    # all three together
+    path7, m7 = build_combined_export_zip("http://fake", None, ["flat", "ndjson", "bundles"])
+    try:
+        with zipfile.ZipFile(path7) as zf:
+            names = set(zf.namelist())
+            check("ndjson under its own dir", "ndjson/Patient.ndjson" in names)
+            check("flat under its own dir", "flat/patients_flat.csv" in names)
+            check("bundles under its own dir",
+                  any(n.startswith("bundles/") and n.endswith(".json") for n in names))
+            check("per-format manifests kept",
+                  {"ndjson/manifest.json", "flat/manifest.json", "bundles/manifest.json"} <= names)
+            check("top-level manifest added", "manifest.json" in names)
+            top = json.loads(zf.read("manifest.json"))
+            check("top manifest lists every format",
+                  set(top["formats"]) == {"ndjson", "bundles", "flat"})
+            check("combined manifest returned", set(m7.get("formats", {})) == {"ndjson", "bundles", "flat"})
+            card = zf.read("README.md").decode()
+            check("combined card names the dirs", "`ndjson/`" in card and "`flat/`" in card)
+    finally:
+        os.unlink(path7)
+
+    # writer order is canonical regardless of the order requested
+    path8, m8 = build_combined_export_zip("http://fake", None, ["flat", "ndjson"])
+    try:
+        check("format order canonical", list(m8["formats"]) == ["ndjson", "flat"],
+              f"(order={list(m8['formats'])})")
+    finally:
+        os.unlink(path8)
+
+    # duplicates collapse; unknown names are ignored; empty selection is an error
+    path9, m9 = build_combined_export_zip("http://fake", None, ["flat", "flat", "bogus"])
+    try:
+        check("duplicates collapse to one format", "patients_flat.csv" in
+              zipfile.ZipFile(path9).namelist())
+    finally:
+        os.unlink(path9)
+    try:
+        build_combined_export_zip("http://fake", None, ["bogus"])
+        check("all-invalid selection rejected", False)
+    except ValueError:
+        check("all-invalid selection rejected", True)
+
+check("writer registry covers all formats",
+      set(FORMAT_WRITERS) == {"ndjson", "bundles", "flat"})
 check("type lists sane", "Patient" in PATIENT_TYPES and "Organization" in REFERENCE_TYPES)
 
 print()

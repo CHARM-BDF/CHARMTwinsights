@@ -5,8 +5,8 @@
     icon="📦"
     accent="#0d9488"
     :steps="steps"
-    finishLabel="Done"
-    @finish="goHome()"
+    finishLabel="⬇ Download Exported Data"
+    @finish="startDownload"
   >
     <!-- ═══════════════ Step 0: Scope ═══════════════ -->
     <template #step-0>
@@ -63,41 +63,33 @@
     <template #step-1>
       <h2>Format &amp; download</h2>
 
+      <p class="muted" style="margin: -0.2rem 0 0.9rem; font-size:0.9rem">
+        Pick one or more — several formats come back in one zip, each in its own folder.
+      </p>
+
       <div class="mode-grid">
         <button
+          v-for="f in FORMATS"
+          :key="f.key"
           class="mode-card"
-          :class="{ selected: data.format === 'ndjson' }"
-          @click="data.format = 'ndjson'"
+          :class="{ selected: data.formats.includes(f.key) }"
+          @click="toggleFormat(f.key)"
         >
-          <div class="mode-icon">🧬</div>
+          <div class="mode-icon">{{ f.icon }}</div>
           <div>
-            <div class="mode-title">FHIR NDJSON</div>
-            <div class="mode-sub">Full fidelity — one file per resource type (Bulk Data layout), providers included</div>
-          </div>
-        </button>
-        <button
-          class="mode-card"
-          :class="{ selected: data.format === 'bundles' }"
-          @click="data.format = 'bundles'"
-        >
-          <div class="mode-icon">🗃️</div>
-          <div>
-            <div class="mode-title">Per-patient bundles</div>
-            <div class="mode-sub">The layout Synthea generates — one Bundle file per patient, plus provider files</div>
-          </div>
-        </button>
-        <button
-          class="mode-card"
-          :class="{ selected: data.format === 'flat' }"
-          @click="data.format = 'flat'"
-        >
-          <div class="mode-icon">📊</div>
-          <div>
-            <div class="mode-title">Flat table (CSV)</div>
-            <div class="mode-sub">ML-ready — one row per patient, 0/1 columns per condition/medication/procedure</div>
+            <div class="mode-title">
+              <span class="fmt-check">{{ data.formats.includes(f.key) ? '☑' : '☐' }}</span>
+              {{ f.title }}
+            </div>
+            <div class="mode-sub">{{ f.sub }}</div>
           </div>
         </button>
       </div>
+
+      <p v-if="bothFhirLayouts" class="muted redundancy-note">
+        Note: NDJSON and per-patient bundles hold the same resources in two layouts —
+        picking both roughly doubles the build time for duplicate data.
+      </p>
 
       <div class="summary">
         <h3>About to export</h3>
@@ -110,32 +102,17 @@
             <li><strong>{{ data.cohortIds.length }}</strong> cohort(s): <code>{{ data.cohortIds.join(', ') }}</code></li>
             <li>~<strong>{{ selectedPatients }}</strong> patients</li>
           </template>
-          <li v-if="data.format === 'ndjson'">
-            Format: <strong>one NDJSON file per FHIR resource type</strong> — full records
-            plus the provider/reference resources they point at, with <code>manifest.json</code>
-            (per-type count verification) and a <code>README.md</code>
-          </li>
-          <li v-else-if="data.format === 'bundles'">
-            Format: <strong>one FHIR Bundle file per patient</strong> (all of their resources),
-            plus <code>practitionerInformation.json</code> and <code>hospitalInformation.json</code>
-            — the same file structure Synthea generates
-          </li>
-          <li v-else>
-            Format: <strong><code>patients_flat.csv</code></strong> — demographics + indicator
-            columns, with <code>data_dictionary.json</code> mapping columns to labels
+          <li v-for="f in selectedFormats" :key="f.key">
+            <template v-if="data.formats.length > 1"><code>{{ f.key }}/</code> — </template>
+            <span v-html="f.summary"></span>
           </li>
         </ul>
       </div>
 
-      <div class="dl-row">
-        <a class="primary dl-btn" :href="exportUrl" @click="downloadStarted = true">
-          ⬇ Download zip
-        </a>
-        <span v-if="downloadStarted" class="muted" style="font-size:0.85rem">
-          Preparing on the server — the download starts when the zip is built
-          (large stores can take a minute or two). Check your browser's downloads.
-        </span>
-      </div>
+      <p v-if="downloadStarted" class="muted" style="font-size:0.85rem; margin-top:1rem">
+        Preparing on the server — the download starts when the zip is built
+        (large stores can take a minute or two). Check your browser's downloads.
+      </p>
     </template>
   </Wizard>
 </template>
@@ -146,16 +123,71 @@ import axios from 'axios'
 import Wizard from '../components/Wizard.vue'
 import { store, goHome } from '../state.js'
 
+const FORMATS = [
+  {
+    key: 'ndjson',
+    icon: '🧬',
+    title: 'FHIR NDJSON',
+    sub: 'Full fidelity — one file per resource type (Bulk Data layout), providers included',
+    summary: 'Format: <strong>one NDJSON file per FHIR resource type</strong> — full records '
+      + 'plus the provider/reference resources they point at, with <code>manifest.json</code> '
+      + '(per-type count verification) and a <code>README.md</code>',
+  },
+  {
+    key: 'bundles',
+    icon: '🗃️',
+    title: 'Per-patient bundles',
+    sub: 'The layout Synthea generates — one Bundle file per patient, plus provider files',
+    summary: 'Format: <strong>one FHIR Bundle file per patient</strong> (all of their resources), '
+      + 'plus <code>practitionerInformation.json</code> and <code>hospitalInformation.json</code> '
+      + '— the same file structure Synthea generates',
+  },
+  {
+    key: 'flat',
+    icon: '📊',
+    title: 'Flat table (CSV)',
+    sub: 'ML-ready — one row per patient, 0/1 columns per condition/medication/procedure',
+    summary: 'Format: <strong><code>patients_flat.csv</code></strong> — demographics + indicator '
+      + 'columns, with <code>data_dictionary.json</code> mapping columns to labels',
+  },
+]
+
 // Reuse previously entered values if the user left and came back.
 const data = store.flowData.export ?? reactive({
   scope: 'all', // 'all' | 'cohorts'
   cohortIds: [],
-  format: 'ndjson', // 'ndjson' | 'bundles' | 'flat'
+  formats: ['ndjson'], // any of 'ndjson' | 'bundles' | 'flat'
 })
 store.flowData.export = data
-if (!data.format) data.format = 'ndjson' // sessions restored from before the format option
+// Sessions restored from the single-format version carried `format`.
+if (!Array.isArray(data.formats)) data.formats = [data.format || 'ndjson']
+if (!data.formats.length) data.formats = ['ndjson']
 
 const downloadStarted = ref(false)
+
+function toggleFormat(key) {
+  const i = data.formats.indexOf(key)
+  if (i === -1) data.formats.push(key)
+  else if (data.formats.length > 1) data.formats.splice(i, 1) // never leave zero selected
+}
+
+// Keep the display order stable regardless of click order.
+const selectedFormats = computed(() => FORMATS.filter((f) => data.formats.includes(f.key)))
+const bothFhirLayouts = computed(
+  () => data.formats.includes('ndjson') && data.formats.includes('bundles'),
+)
+
+function startDownload() {
+  downloadStarted.value = true
+  // The server sets Content-Disposition: attachment, so this downloads
+  // without navigating away from the wizard.
+  const a = document.createElement('a')
+  a.href = exportUrl.value
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}
 
 // ─── cohorts ─────────────────────────────────────────────────────────────────
 const cohorts = ref([])
@@ -190,7 +222,7 @@ const exportUrl = computed(() => {
   const parts = data.scope === 'all'
     ? []
     : data.cohortIds.map((c) => `cohort_id=${encodeURIComponent(c)}`)
-  parts.push(`format=${data.format}`)
+  for (const f of selectedFormats.value) parts.push(`format=${f.key}`)
   return `${store.apiBase}/export/fhir?${parts.join('&')}`
 })
 
@@ -201,7 +233,7 @@ const steps = reactive([
 ])
 
 watch(
-  [() => data.scope, () => data.cohortIds.length, () => data.format],
+  [() => data.scope, () => data.cohortIds.length, () => data.formats.length],
   () => {
     steps[0].canAdvance = data.scope === 'all' || data.cohortIds.length > 0
     downloadStarted.value = false
@@ -234,6 +266,15 @@ watch(
 .mode-card.selected { border-color: #0d9488; background: #f0fdfa; }
 .mode-icon { font-size: 1.8rem; }
 .mode-title { font-weight: 600; margin-bottom: 0.2rem; }
+.fmt-check { color: #0d9488; margin-right: 0.15rem; }
+.redundancy-note {
+  font-size: 0.85rem;
+  margin: -0.4rem 0 0.9rem;
+  padding: 0.5rem 0.8rem;
+  background: var(--surface-alt);
+  border-left: 3px solid #f59e0b;
+  border-radius: var(--radius-sm);
+}
 .mode-sub { font-size: 0.85rem; color: var(--text-muted); }
 
 .cohort-list {
@@ -305,21 +346,6 @@ watch(
 .summary li { margin-bottom: 0.3rem; }
 
 
-.dl-row {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  flex-wrap: wrap;
-  margin-top: 1.2rem;
-}
-.dl-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  text-decoration: none;
-  padding: 0.55rem 1.2rem;
-  border-radius: var(--radius-sm);
-}
 
 .spinner {
   display: inline-block;

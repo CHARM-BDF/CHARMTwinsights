@@ -194,13 +194,13 @@ def _fetch_type_to_file(hapi_url: str, rt: str, scopes: List[Optional[str]],
     return rt, path, count, expected
 
 
-def build_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
-    """Write the Bulk-Data-layout export zip to a temp file; returns
-    (path, manifest). Empty/None cohort_ids means the whole store.
+def _write_ndjson(zf: zipfile.ZipFile, prefix: str, hapi_url: str,
+                  cohort_ids: Optional[List[str]]) -> Dict:
+    """Write the Bulk-Data NDJSON layout into an open zip under `prefix`;
+    returns this format's manifest.
 
     Types are fetched on EXPORT_FETCH_WORKERS parallel lanes into temp files
     (disk, not memory) and zipped as each lane finishes, in stable order."""
-    hapi_url = hapi_url.rstrip("/")
     cohort_ids = [c for c in (cohort_ids or []) if c]
     scope_all = not cohort_ids
     scopes = [None] if scope_all else cohort_ids
@@ -210,49 +210,46 @@ def build_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> T
     truncated: List[str] = []
     mismatches: List[Dict[str, Any]] = []
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="charm-export-")
-    try:
-        with tempfile.TemporaryDirectory(prefix="charm-export-lanes-") as tmpdir, \
-                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf, \
-                ThreadPoolExecutor(max_workers=EXPORT_FETCH_WORKERS) as pool:
-            futures = [
-                pool.submit(_fetch_type_to_file, hapi_url, rt, scopes, tmpdir)
-                for rt in resource_types
-            ]
-            for fut in futures:
-                rt, path, count, expected = fut.result()
-                if path is None:
-                    continue
-                zf.write(path, arcname=f"{rt}.ndjson")
-                os.unlink(path)
-                counts[rt] = count
-                if count >= MAX_RESOURCES_PER_TYPE:
-                    truncated.append(rt)
-                if expected is not None and expected != count:
-                    mismatches.append({"type": rt, "exported": count, "expected": expected})
-                    logger.warning(f"Export count mismatch for {rt}: {count} != {expected}")
-                logger.info(f"Export: {rt} — {count} resources")
+    with tempfile.TemporaryDirectory(prefix="charm-export-lanes-") as tmpdir, \
+            ThreadPoolExecutor(max_workers=EXPORT_FETCH_WORKERS) as pool:
+        futures = [
+            pool.submit(_fetch_type_to_file, hapi_url, rt, scopes, tmpdir)
+            for rt in resource_types
+        ]
+        for fut in futures:
+            rt, path, count, expected = fut.result()
+            if path is None:
+                continue
+            zf.write(path, arcname=f"{prefix}{rt}.ndjson")
+            os.unlink(path)
+            counts[rt] = count
+            if count >= MAX_RESOURCES_PER_TYPE:
+                truncated.append(rt)
+            if expected is not None and expected != count:
+                mismatches.append({"type": rt, "exported": count, "expected": expected})
+                logger.warning(f"Export count mismatch for {rt}: {count} != {expected}")
+            logger.info(f"Export: {rt} — {count} resources")
 
-            manifest = {
-                "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "source": "CHARMTwinsights FHIR store",
-                "fhir_version": "R4",
-                "format": "FHIR Bulk Data NDJSON (one file per resource type)",
-                "scope": "all" if scope_all else "cohorts",
-                "cohorts": cohort_ids,
-                "resource_counts": counts,
-                "total_resources": sum(counts.values()),
-                "truncated_types": truncated,
-                "count_verification": {"performed": len(scopes) == 1, "mismatches": mismatches},
-            }
-            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-            zf.writestr("README.md", _ndjson_card(manifest))
-    except Exception:
-        tmp.close()
-        os.unlink(tmp.name)
-        raise
-    tmp.close()
-    return tmp.name, manifest
+    manifest = {
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "CHARMTwinsights FHIR store",
+        "fhir_version": "R4",
+        "format": "FHIR Bulk Data NDJSON (one file per resource type)",
+        "scope": "all" if scope_all else "cohorts",
+        "cohorts": cohort_ids,
+        "resource_counts": counts,
+        "total_resources": sum(counts.values()),
+        "truncated_types": truncated,
+        "count_verification": {"performed": len(scopes) == 1, "mismatches": mismatches},
+    }
+    zf.writestr(f"{prefix}manifest.json", json.dumps(manifest, indent=2))
+    zf.writestr(f"{prefix}README.md", _ndjson_card(manifest))
+    return manifest
+
+
+def build_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
+    """NDJSON-only export zip; returns (path, manifest)."""
+    return build_combined_export_zip(hapi_url, cohort_ids, ["ndjson"])
 
 
 # ─── flat (ML-ready) export ───────────────────────────────────────────────────
@@ -261,10 +258,11 @@ def _slug(normalized_label: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", normalized_label).strip("_")[:60] or "unnamed"
 
 
-def build_flat_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
+def _write_flat(zf: zipfile.ZipFile, prefix: str, hapi_url: str,
+                cohort_ids: Optional[List[str]]) -> Dict:
     """One CSV row per patient: demographics + 0/1 indicator columns for every
-    clinical attribute in scope. Returns (path, manifest)."""
-    hapi_url = hapi_url.rstrip("/")
+    clinical attribute in scope. Writes into an open zip under `prefix`;
+    returns this format's manifest."""
     cohort_ids = [c for c in (cohort_ids or []) if c]
     scope_all = not cohort_ids
     scopes = [None] if scope_all else cohort_ids
@@ -303,13 +301,14 @@ def build_flat_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None)
     # Columns: per category, sorted by prevalence (desc) then name.
     columns: List[Tuple[str, str, str]] = []  # (column, category, normalized label)
     dictionary: Dict[str, Dict[str, Any]] = {}
-    for cat, (_rt, _cf, prefix) in FLAT_CATEGORIES.items():
+    # NB: col_prefix, not `prefix` — the latter is this writer's zip-path prefix.
+    for cat, (_rt, _cf, col_prefix) in FLAT_CATEGORIES.items():
         prevalence = {
             norm: sum(1 for s in label_sets[cat].values() if norm in s)
             for norm in display[cat]
         }
         for norm in sorted(display[cat], key=lambda n: (-prevalence[n], n)):
-            col = base = f"{prefix}_{_slug(norm)}"
+            col = base = f"{col_prefix}_{_slug(norm)}"
             i = 2
             while col in dictionary:  # slug collision
                 col = f"{base}_{i}"
@@ -319,51 +318,48 @@ def build_flat_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None)
 
     demo_cols = ["patient_id", "gender", "birth_date", "age", "ethnicity", "cohorts", "datatype"]
 
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="charm-export-")
-    try:
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
-            with zf.open("patients_flat.csv", "w", force_zip64=True) as raw:
-                text = io.TextIOWrapper(raw, encoding="utf-8", newline="")
-                writer = csv.writer(text)
-                writer.writerow(demo_cols + [c for c, _cat, _n in columns])
-                for pid, p in patients.items():
-                    tags = patient_tags(p)
-                    row = [
-                        pid,
-                        p.get("gender") or "",
-                        p.get("birthDate") or "",
-                        age_from_birth_date(p.get("birthDate")),
-                        extract_ethnicity(p) or "",
-                        ";".join(tags.get("cohort_ids", [])),
-                        tags.get("datatype") or "",
-                    ]
-                    row += [
-                        1 if norm in label_sets[cat].get(pid, set()) else 0
-                        for (_col, cat, norm) in columns
-                    ]
-                    writer.writerow(row)
-                text.flush()
-                text.detach()  # keep the underlying zip stream open for zipfile to close
+    with zf.open(f"{prefix}patients_flat.csv", "w", force_zip64=True) as raw:
+        text = io.TextIOWrapper(raw, encoding="utf-8", newline="")
+        writer = csv.writer(text)
+        writer.writerow(demo_cols + [c for c, _cat, _n in columns])
+        for pid, p in patients.items():
+            tags = patient_tags(p)
+            row = [
+                pid,
+                p.get("gender") or "",
+                p.get("birthDate") or "",
+                age_from_birth_date(p.get("birthDate")),
+                extract_ethnicity(p) or "",
+                ";".join(tags.get("cohort_ids", [])),
+                tags.get("datatype") or "",
+            ]
+            row += [
+                1 if norm in label_sets[cat].get(pid, set()) else 0
+                for (_col, cat, norm) in columns
+            ]
+            writer.writerow(row)
+        text.flush()
+        text.detach()  # keep the underlying zip stream open for zipfile to close
 
-            manifest = {
-                "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "source": "CHARMTwinsights FHIR store",
-                "format": "flat patient table (CSV, 0/1 indicators)",
-                "scope": "all" if scope_all else "cohorts",
-                "cohorts": cohort_ids,
-                "patients": len(patients),
-                "indicator_columns": len(columns),
-                "demographic_columns": demo_cols,
-            }
-            zf.writestr("data_dictionary.json", json.dumps(dictionary, indent=2))
-            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-            zf.writestr("README.md", _flat_card(manifest))
-    except Exception:
-        tmp.close()
-        os.unlink(tmp.name)
-        raise
-    tmp.close()
-    return tmp.name, manifest
+    manifest = {
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "CHARMTwinsights FHIR store",
+        "format": "flat patient table (CSV, 0/1 indicators)",
+        "scope": "all" if scope_all else "cohorts",
+        "cohorts": cohort_ids,
+        "patients": len(patients),
+        "indicator_columns": len(columns),
+        "demographic_columns": demo_cols,
+    }
+    zf.writestr(f"{prefix}data_dictionary.json", json.dumps(dictionary, indent=2))
+    zf.writestr(f"{prefix}manifest.json", json.dumps(manifest, indent=2))
+    zf.writestr(f"{prefix}README.md", _flat_card(manifest))
+    return manifest
+
+
+def build_flat_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
+    """Flat-CSV-only export zip; returns (path, manifest)."""
+    return build_combined_export_zip(hapi_url, cohort_ids, ["flat"])
 
 
 # ─── per-patient bundles (Synthea-style layout) export ───────────────────────
@@ -447,10 +443,10 @@ def _fetch_patient_bundle_to_file(hapi_url: str, patient: Dict, tmpdir: str):
     return _patient_filename(patient), path, len(resources)
 
 
-def build_bundles_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
+def _write_bundles(zf: zipfile.ZipFile, prefix: str, hapi_url: str,
+                   cohort_ids: Optional[List[str]]) -> Dict:
     """Synthea-style layout: one Bundle file per patient plus provider files.
-    Returns (path, manifest). Empty/None cohort_ids means the whole store."""
-    hapi_url = hapi_url.rstrip("/")
+    Writes into an open zip under `prefix`; returns this format's manifest."""
     cohort_ids = [c for c in (cohort_ids or []) if c]
     scope_all = not cohort_ids
     scopes = [None] if scope_all else cohort_ids
@@ -466,64 +462,134 @@ def build_bundles_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = No
     total_resources = 0
     provider_counts: Dict[str, int] = {}
 
+    with tempfile.TemporaryDirectory(prefix="charm-export-bundles-") as tmpdir, \
+            ThreadPoolExecutor(max_workers=EXPORT_FETCH_WORKERS) as pool:
+        futures = [
+            pool.submit(_fetch_patient_bundle_to_file, hapi_url, p, tmpdir)
+            for p in patients.values()
+        ]
+        for fut in futures:
+            filename, path, n = fut.result()
+            zf.write(path, arcname=f"{prefix}{filename}")
+            os.unlink(path)
+            total_resources += n
+
+        # Provider/reference bundles, mirroring Synthea's special files.
+        for arcname, rtypes in (
+            ("practitionerInformation.json", ["Practitioner", "PractitionerRole"]),
+            ("hospitalInformation.json", ["Organization", "Location"]),
+        ):
+            resources: List[Dict] = []
+            seen: set = set()
+            for rt in rtypes:
+                for cohort in scopes:
+                    for res in _iter_search(hapi_url, rt, _tag_param(cohort)):
+                        rid = res.get("id")
+                        if rid and rid in seen:
+                            continue
+                        if rid:
+                            seen.add(rid)
+                        resources.append(res)
+                provider_counts[rt] = sum(
+                    1 for r in resources if r.get("resourceType") == rt)
+            if resources:
+                fd, ppath = tempfile.mkstemp(suffix=".json", dir=tmpdir)
+                os.close(fd)
+                _write_bundle_file(ppath, resources)
+                zf.write(ppath, arcname=f"{prefix}{arcname}")
+                os.unlink(ppath)
+                total_resources += len(resources)
+            logger.info(f"Export: {arcname} — {len(resources)} resources")
+
+    manifest = {
+        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "CHARMTwinsights FHIR store",
+        "fhir_version": "R4",
+        "format": "per-patient FHIR bundles (Synthea-style layout)",
+        "scope": "all" if scope_all else "cohorts",
+        "cohorts": cohort_ids,
+        "patients": len(patients),
+        "provider_resources": provider_counts,
+        "total_resources": total_resources,
+    }
+    zf.writestr(f"{prefix}manifest.json", json.dumps(manifest, indent=2))
+    zf.writestr(f"{prefix}README.md", _bundles_card(manifest))
+    return manifest
+
+
+def build_bundles_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None) -> Tuple[str, Dict]:
+    """Bundles-only export zip; returns (path, manifest)."""
+    return build_combined_export_zip(hapi_url, cohort_ids, ["bundles"])
+
+
+# ─── combined (multi-format) export ───────────────────────────────────────────
+
+# Writer per format. Order here fixes the order formats are built and listed.
+FORMAT_WRITERS = {
+    "ndjson": _write_ndjson,
+    "bundles": _write_bundles,
+    "flat": _write_flat,
+}
+
+
+def _combined_card(manifest: Dict) -> str:
+    lines = []
+    for name, m in manifest["formats"].items():
+        lines.append(f"- `{name}/` — {m['format']}")
+    return f"""# CHARMTwinsights export
+
+Exported {manifest['exported_at']} from {_scope_line(manifest)}.
+
+This archive contains {len(manifest['formats'])} views of the same data, each
+in its own directory with its own manifest and README:
+
+{chr(10).join(lines)}
+"""
+
+
+def build_combined_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None,
+                              formats: Optional[List[str]] = None) -> Tuple[str, Dict]:
+    """Build one zip containing every requested format; returns (path, manifest).
+
+    A single format keeps the flat layout it has always had (files at the zip
+    root). Several formats are placed under <format>/ directories — they each
+    emit manifest.json and README.md, so they would otherwise collide — plus a
+    top-level manifest describing the whole archive.
+    """
+    hapi_url = hapi_url.rstrip("/")
+    cohort_ids = [c for c in (cohort_ids or []) if c]
+    requested = [f for f in (formats or ["ndjson"]) if f in FORMAT_WRITERS]
+    # Preserve FORMAT_WRITERS order and drop duplicates.
+    ordered = [f for f in FORMAT_WRITERS if f in requested]
+    if not ordered:
+        raise ValueError(
+            f"No valid export format requested. Valid: {', '.join(FORMAT_WRITERS)}")
+    multi = len(ordered) > 1
+
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip", prefix="charm-export-")
+    manifests: Dict[str, Dict] = {}
     try:
-        with tempfile.TemporaryDirectory(prefix="charm-export-bundles-") as tmpdir, \
-                zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf, \
-                ThreadPoolExecutor(max_workers=EXPORT_FETCH_WORKERS) as pool:
-            futures = [
-                pool.submit(_fetch_patient_bundle_to_file, hapi_url, p, tmpdir)
-                for p in patients.values()
-            ]
-            for fut in futures:
-                filename, path, n = fut.result()
-                zf.write(path, arcname=filename)
-                os.unlink(path)
-                total_resources += n
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name in ordered:
+                logger.info(f"Export: building '{name}' format")
+                manifests[name] = FORMAT_WRITERS[name](
+                    zf, f"{name}/" if multi else "", hapi_url, cohort_ids)
 
-            # Provider/reference bundles, mirroring Synthea's special files.
-            for arcname, rtypes in (
-                ("practitionerInformation.json", ["Practitioner", "PractitionerRole"]),
-                ("hospitalInformation.json", ["Organization", "Location"]),
-            ):
-                resources: List[Dict] = []
-                seen: set = set()
-                for rt in rtypes:
-                    for cohort in scopes:
-                        for res in _iter_search(hapi_url, rt, _tag_param(cohort)):
-                            rid = res.get("id")
-                            if rid and rid in seen:
-                                continue
-                            if rid:
-                                seen.add(rid)
-                            resources.append(res)
-                    provider_counts[rt] = sum(
-                        1 for r in resources if r.get("resourceType") == rt)
-                if resources:
-                    fd, ppath = tempfile.mkstemp(suffix=".json", dir=tmpdir)
-                    os.close(fd)
-                    _write_bundle_file(ppath, resources)
-                    zf.write(ppath, arcname=arcname)
-                    os.unlink(ppath)
-                    total_resources += len(resources)
-                logger.info(f"Export: {arcname} — {len(resources)} resources")
-
-            manifest = {
-                "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "source": "CHARMTwinsights FHIR store",
-                "fhir_version": "R4",
-                "format": "per-patient FHIR bundles (Synthea-style layout)",
-                "scope": "all" if scope_all else "cohorts",
-                "cohorts": cohort_ids,
-                "patients": len(patients),
-                "provider_resources": provider_counts,
-                "total_resources": total_resources,
-            }
-            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
-            zf.writestr("README.md", _bundles_card(manifest))
+            if multi:
+                combined = {
+                    "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "source": "CHARMTwinsights FHIR store",
+                    "scope": "all" if not cohort_ids else "cohorts",
+                    "cohorts": cohort_ids,
+                    "formats": manifests,
+                    "total_resources": max(
+                        (m.get("total_resources", 0) for m in manifests.values()), default=0),
+                }
+                zf.writestr("manifest.json", json.dumps(combined, indent=2))
+                zf.writestr("README.md", _combined_card(combined))
     except Exception:
         tmp.close()
         os.unlink(tmp.name)
         raise
     tmp.close()
-    return tmp.name, manifest
+    return tmp.name, (combined if multi else manifests[ordered[0]])
