@@ -63,7 +63,7 @@
         <select v-model="data.cohortId">
           <option value="">(select cohort)</option>
           <option v-for="c in mockCohorts" :key="c.id" :value="c.id">
-            {{ c.id }} — {{ c.size }} patients ({{ c.source }})
+            {{ c.id }} · {{ c.size }} patients ({{ c.source }})
           </option>
         </select>
         <p class="muted" style="margin-top: 0.4rem">
@@ -150,7 +150,7 @@
               whole cohort <code>{{ data.cohortId || '—' }}</code>
             </strong>
             <strong v-else-if="data.targetType === 'subset'">
-              subset of <code>{{ data.cohortId || '—' }}</code> — filter: <em>{{ data.filter || '(none)' }}</em>
+              subset of <code>{{ data.cohortId || '—' }}</code>, filter: <em>{{ data.filter || '(none)' }}</em>
             </strong>
             <strong v-else-if="data.targetType === 'single'">
               patient <code>{{ data.patientId || '—' }}</code>
@@ -213,13 +213,13 @@ import { store, goHome } from '../state.js'
 const mockModels = [
   {
     image: 'coxcopdmodel:latest',
-    title: 'Cox PH — COPD risk',
+    title: 'Cox PH: COPD risk',
     short_description: 'Survival model predicting 5-year COPD outcomes.',
   },
   {
     image: 'irismodel:latest',
     title: 'Iris classifier (demo)',
-    short_description: 'Classic demo classifier — will only work with iris-shaped inputs.',
+    short_description: 'Classic demo classifier. Will only work with iris-shaped inputs.',
   },
   {
     image: 'reachablefrommodel:latest',

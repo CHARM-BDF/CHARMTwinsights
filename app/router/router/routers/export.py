@@ -25,7 +25,7 @@ async def proxy_export_fhir(cohort_id: List[str] = Query(default=[]),
                             format: List[str] = Query(default=[])):
     """Zip export: format=ndjson (Bulk Data layout), format=bundles (one
     Bundle file per patient, Synthea-style layout), format=flat (one CSV row
-    per patient) — repeat ?format= to get several in one archive, each under
+    per patient). Repeat ?format= to get several in one archive, each under
     its own directory. Repeat ?cohort_id= to export specific cohorts; omit for
     the whole store. Streamed through so large exports never buffer here."""
     url = f"{BACKEND_URL}/export/fhir"

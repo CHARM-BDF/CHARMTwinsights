@@ -96,7 +96,7 @@ const activeFlow = computed(() => getFlow(store.currentFlow))
   color: var(--text);
   min-width: 0;
 }
-/* Ellipsis must live on the text span itself — text-overflow on the flex
+/* Ellipsis must live on the text span itself, because text-overflow on the flex
    container silently drops the text node instead of truncating it. */
 .crumb-text {
   overflow: hidden;

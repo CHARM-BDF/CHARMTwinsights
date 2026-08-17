@@ -3,23 +3,23 @@ FHIR Data Export Module
 
 Three export formats, all zipped:
 
-- "ndjson" (default): the FHIR Bulk Data layout — one newline-delimited JSON
+- "ndjson" (default): the FHIR Bulk Data layout. One newline-delimited JSON
   file per resource type, full fidelity, plus manifest.json and a README.
-- "bundles": the layout Synthea generates — one FHIR Bundle file per patient
+- "bundles": the layout Synthea generates. One FHIR Bundle file per patient
   (all of their resources), plus practitionerInformation.json and
   hospitalInformation.json holding the provider/reference resources.
-- "flat": one CSV row per patient — demographics plus 0/1 indicator columns
+- "flat": one CSV row per patient. Demographics plus 0/1 indicator columns
   for every condition / medication / procedure present in the scope, with a
   data_dictionary.json mapping columns back to display labels.
 
 Scoping: cohort exports rely on the urn:charm:cohort meta tag, which the
-generation and ingestion pipelines apply to every resource in a bundle —
+generation and ingestion pipelines apply to every resource in a bundle,
 including the Synthea provider bundles (hospitalInformation*/
 practitionerInformation*), so Organization/Practitioner/Location references
 inside patient records resolve within the export.
 
 Paging is _count/_offset/_sort=_id: the explicit sort costs ~2x per page but
-is required for correctness — unsorted offset scans returned unstable
+is required for correctness. Unsorted offset scans returned unstable
 orderings under load and silently dropped rows. Each type's exported count is
 cross-checked against a _summary=count query and mismatches are reported in
 the manifest.
@@ -152,7 +152,7 @@ def _flat_card(manifest: Dict) -> str:
 
 Exported {manifest['exported_at']} from {_scope_line(manifest)}.
 
-`patients_flat.csv` — one row per patient: demographics plus 0/1 indicator
+`patients_flat.csv` holds one row per patient: demographics plus 0/1 indicator
 columns for every condition (`cond_*`), medication (`med_*`), and procedure
 (`proc_*`) observed in the scope. `data_dictionary.json` maps each column to
 its display label and patient count.
@@ -167,7 +167,7 @@ its display label and patient count.
 def _fetch_type_to_file(hapi_url: str, rt: str, scopes: List[Optional[str]],
                         tmpdir: str):
     """One export lane: stream a resource type (sorted pages, deduped by id
-    across cohorts) into a temp NDJSON file — memory stays one page deep.
+    across cohorts) into a temp NDJSON file. Memory stays one page deep.
     Returns (rt, path or None if empty, count, expected server-side count)."""
     fd, path = tempfile.mkstemp(suffix=".ndjson", prefix=f"{rt}-", dir=tmpdir)
     count = 0
@@ -228,7 +228,7 @@ def _write_ndjson(zf: zipfile.ZipFile, prefix: str, hapi_url: str,
             if expected is not None and expected != count:
                 mismatches.append({"type": rt, "exported": count, "expected": expected})
                 logger.warning(f"Export count mismatch for {rt}: {count} != {expected}")
-            logger.info(f"Export: {rt} — {count} resources")
+            logger.info(f"Export {rt}: {count} resources")
 
     manifest = {
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -301,7 +301,7 @@ def _write_flat(zf: zipfile.ZipFile, prefix: str, hapi_url: str,
     # Columns: per category, sorted by prevalence (desc) then name.
     columns: List[Tuple[str, str, str]] = []  # (column, category, normalized label)
     dictionary: Dict[str, Dict[str, Any]] = {}
-    # NB: col_prefix, not `prefix` — the latter is this writer's zip-path prefix.
+    # NB: col_prefix, not `prefix`. The latter is this writer's zip-path prefix.
     for cat, (_rt, _cf, col_prefix) in FLAT_CATEGORIES.items():
         prevalence = {
             norm: sum(1 for s in label_sets[cat].values() if norm in s)
@@ -365,7 +365,7 @@ def build_flat_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = None)
 # ─── per-patient bundles (Synthea-style layout) export ───────────────────────
 
 def _bundles_card(manifest: Dict) -> str:
-    return f"""# CHARMTwinsights FHIR export — per-patient bundles
+    return f"""# CHARMTwinsights FHIR export: per-patient bundles
 
 Exported {manifest['exported_at']} from {_scope_line(manifest)}.
 
@@ -373,8 +373,8 @@ The layout Synthea generates: one FHIR R4 Bundle (type `collection`) per
 patient holding every resource of that patient, named `Given_Family_id.json`,
 plus the provider/reference resources the records point at:
 
-- `practitionerInformation.json` — Practitioner and PractitionerRole
-- `hospitalInformation.json` — Organization and Location
+- `practitionerInformation.json`: Practitioner and PractitionerRole
+- `hospitalInformation.json`: Organization and Location
 
 - Patients: {manifest['patients']}
 - Total resources: {manifest['total_resources']}
@@ -499,7 +499,7 @@ def _write_bundles(zf: zipfile.ZipFile, prefix: str, hapi_url: str,
                 zf.write(ppath, arcname=f"{prefix}{arcname}")
                 os.unlink(ppath)
                 total_resources += len(resources)
-            logger.info(f"Export: {arcname} — {len(resources)} resources")
+            logger.info(f"Export {arcname}: {len(resources)} resources")
 
     manifest = {
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -535,7 +535,7 @@ FORMAT_WRITERS = {
 def _combined_card(manifest: Dict) -> str:
     lines = []
     for name, m in manifest["formats"].items():
-        lines.append(f"- `{name}/` — {m['format']}")
+        lines.append(f"- `{name}/`: {m['format']}")
     return f"""# CHARMTwinsights export
 
 Exported {manifest['exported_at']} from {_scope_line(manifest)}.
@@ -552,9 +552,9 @@ def build_combined_export_zip(hapi_url: str, cohort_ids: Optional[List[str]] = N
     """Build one zip containing every requested format; returns (path, manifest).
 
     A single format keeps the flat layout it has always had (files at the zip
-    root). Several formats are placed under <format>/ directories — they each
-    emit manifest.json and README.md, so they would otherwise collide — plus a
-    top-level manifest describing the whole archive.
+    root). Several formats are placed under <format>/ directories, since they
+    each emit manifest.json and README.md and would otherwise collide. A
+    top-level manifest describes the whole archive.
     """
     hapi_url = hapi_url.rstrip("/")
     cohort_ids = [c for c in (cohort_ids or []) if c]

@@ -26,7 +26,7 @@
             <select v-model="data.browseCohort">
               <option value="">(choose a cohort)</option>
               <option v-for="c in cohorts" :key="c.cohort_id" :value="c.cohort_id">
-                {{ c.cohort_id }} — {{ c.patient_count }} patients ({{ c.source }})
+                {{ c.cohort_id }} · {{ c.patient_count }} patients ({{ c.source }})
               </option>
             </select>
             <p v-if="cohortsError" class="err-text" style="margin-top:0.3rem; font-size:0.85rem">✗ {{ cohortsError }}</p>
@@ -72,8 +72,8 @@
       </div>
 
       <template v-else-if="profile">
-        <!-- Subject summary (the raw patient id stays out of the way here —
-             it was picked on the previous step; hover the card if needed) -->
+        <!-- Subject summary. The raw patient id stays out of the way here:
+             it was picked on the previous step, and the card title still has it. -->
         <div class="subject-card" :title="`Subject record: ${profile.id}`">
           <span class="muted">{{ profile.gender ?? '?' }} · {{ profile.age != null ? profile.age + ' y' : 'age unknown' }}</span>
           <span v-if="profile.ethnicity" class="muted">· {{ profile.ethnicity }}</span>
@@ -89,11 +89,11 @@
         <!-- prevalence counts state -->
         <p v-if="attrCounts.status === 'building'" class="muted counts-note">
           <span class="spinner tiny"></span>
-          Counting attribute prevalence across the store — counts will appear here shortly…
+          Counting attribute prevalence across the store. Counts will appear here shortly…
         </p>
         <p v-else-if="attrCounts.status === 'ready'" class="muted counts-note">
           Each count shows how many of the <strong>{{ attrCounts.totalOthers }}</strong> other
-          patients share that attribute — low counts make strong twinning criteria.
+          patients share that attribute. Low counts make strong twinning criteria.
         </p>
 
         <!-- Demographics group -->
@@ -197,7 +197,7 @@
           <select v-model="data.scopeCohort">
             <option value="">All cohorts (default)</option>
             <option v-for="c in cohorts" :key="c.cohort_id" :value="c.cohort_id">
-              {{ c.cohort_id }} — {{ c.patient_count }} patients ({{ c.source }})
+              {{ c.cohort_id }} · {{ c.patient_count }} patients ({{ c.source }})
             </option>
           </select>
         </div>
@@ -205,9 +205,9 @@
 
       <p v-if="data.mode === 'existing' && searchScope" class="muted scope-note">
         🔎 Will search <strong>{{ searchScope.patients ?? '…' }}</strong> patient records
-        <template v-if="data.scopeCohort"> in cohort <code>{{ data.scopeCohort }}</code></template>
-        <template v-else> across all <strong>{{ searchScope.cohorts }}</strong> cohorts</template>
-        — the subject itself is excluded from matches.
+        <template v-if="data.scopeCohort"> in cohort <code>{{ data.scopeCohort }}</code>.</template>
+        <template v-else> across all <strong>{{ searchScope.cohorts }}</strong> cohorts.</template>
+        The subject itself is excluded from matches.
       </p>
 
       <!-- generation options -->
@@ -278,7 +278,7 @@
         <div style="width:100%">
           <div style="display:flex; align-items:center; gap:0.7rem; margin-bottom:0.8rem">
             <span class="spinner"></span>
-            <span>Generating {{ data.genCount }} candidates — {{ run.phase || 'queued' }}</span>
+            <span>Generating {{ data.genCount }} candidates ({{ run.phase || 'queued' }})</span>
           </div>
           <div class="progress-wrap">
             <div class="progress-bar" :style="{ width: (run.progress * 100).toFixed(0) + '%' }"></div>
@@ -301,7 +301,7 @@
             patient records{{ searchScopeLabel ? ` in ${searchScopeLabel}` : searchScope ? ` across ${searchScope.cohorts} cohorts` : ' across the store' }}…
           </div>
           <div class="muted search-progress">
-            {{ searchElapsed }}s elapsed — fetching each candidate's
+            {{ searchElapsed }}s elapsed. Fetching each candidate's
             {{ selectedCategoriesLabel }}, then ranking by similarity
           </div>
         </div>
@@ -336,7 +336,7 @@
         <template v-else>
           <!-- ── two-sided comparison: subject vs rotating match ── -->
           <div class="comparator">
-            <!-- subject column (strip stays empty — aligns with the rotator) -->
+            <!-- subject column (strip stays empty, aligns with the rotator) -->
             <div class="cmp-col">
             <div class="cmp-strip"></div>
             <div class="cmp-side">
@@ -438,7 +438,7 @@
           <!-- ── attribute prevalence: candidates sharing each subject attribute ── -->
           <details v-if="run.results.prevalence" class="prev-panel" open>
             <summary>
-              Attribute prevalence — how many of the {{ run.results.prevalence.of }} candidates
+              Attribute prevalence. How many of the {{ run.results.prevalence.of }} candidates
               share each subject attribute
             </summary>
             <div class="prev-grid">
@@ -591,7 +591,7 @@ function ageFromBirthDate(bd) {
   return age
 }
 
-// Profiles come from the twins backend, which pages HAPI exhaustively —
+// Profiles come from the twins backend, which pages HAPI exhaustively.
 // $everything is paginated and silently truncates long-history patients.
 async function fetchProfileFor(pid) {
   const { data: p } = await axios.get(
@@ -687,7 +687,7 @@ async function fetchAttrCounts() {
     attrCounts.byLabel = byLabel
     attrCounts.status = 'ready'
   } catch {
-    attrCounts.status = 'error' // counts are decoration — fail quietly
+    attrCounts.status = 'error' // counts are decoration, so fail quietly
   }
 }
 
@@ -699,7 +699,7 @@ function countTitle(n) {
 }
 
 // (Re)fetch counts whenever a profile arrives; age-tolerance changes shift the
-// age-band count, so refresh on those too (cheap — served from the cache).
+// age-band count, so refresh on those too (cheap, served from the cache).
 watch(profile, (p) => {
   stopCountsPolling()
   attrCounts.status = 'idle'
@@ -925,7 +925,7 @@ const demoFields = computed(() => {
 })
 
 // Clinical categories for both sides.
-// Toggle OFF: rows are the selected criteria — left shows them, right shows ✓/✗.
+// Toggle OFF: rows are the selected criteria. Left shows them, right shows ✓/✗.
 // Toggle ON: both sides show their full attribute lists; shared items get ✓,
 // criteria stay outlined, and criteria the match lacks appear as ✗ ghosts.
 const comparisonCats = computed(() => {
@@ -1042,8 +1042,8 @@ const weightableCategories = computed(() => {
   return cats
 })
 
-// If the emphasized category loses all its selected attributes — or an old
-// session restored a legacy preset value — fall back to equal weight.
+// If the emphasized category loses all its selected attributes, or an old
+// session restored a legacy preset value, fall back to equal weight.
 watch(weightableCategories, (cats) => {
   if (data.weighting !== 'equal' && !cats.some((c) => c.key === data.weighting)) {
     data.weighting = 'equal'

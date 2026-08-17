@@ -45,7 +45,7 @@ import { goHome } from '../state.js'
 const messages = ref([
   {
     role: 'assistant',
-    text: 'Hi — this is where the MCP-backed assistant will live. Try asking about a patient or a model, once wired up.',
+    text: 'Hi. This is where the MCP-backed assistant will live. Try asking about a patient or a model, once wired up.',
   },
 ])
 
@@ -56,7 +56,7 @@ function send() {
   if (!text) return
   messages.value.push({ role: 'user', text })
   draft.value = ''
-  // Stub — echo a placeholder response.
+  // Stub: echo a placeholder response.
   setTimeout(() => {
     messages.value.push({
       role: 'assistant',

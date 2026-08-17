@@ -56,7 +56,7 @@ async def proxy_twin_attribute_counts(body: Dict[str, Any] = Body(...)):
 async def proxy_find_digital_twins(request: Dict[str, Any] = Body(...)):
     """Similarity-ranked digital twin search (proxied to stat_server_py).
 
-    Body: subject_id plus the selected attributes to match on — see the
+    Body: subject_id plus the selected attributes to match on. See the
     stat server's TwinFindRequest model. Scoring can scan a whole cohort,
     so the timeout is generous.
     """

@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 
 // Single reactive store shared across the app.
-// Intentionally lightweight — no Pinia, no router — to keep the footprint
+// Intentionally lightweight (no Pinia, no router) to keep the footprint
 // matched to the existing vueapp's minimal stack.
 
 export const store = reactive({
@@ -15,7 +15,7 @@ export const store = reactive({
   // Per-flow working data, keyed by flow id. Each flow owns its shape.
   flowData: {},
 
-  // API base URL — pulled from Vite env with a sensible default.
+  // API base URL, pulled from Vite env with a sensible default.
   apiBase: import.meta.env.VITE_API_BASE || 'http://localhost:8000',
 })
 
@@ -52,7 +52,7 @@ export function resetFlowData(flowId) {
   store.currentStep = 0
 }
 
-// Metadata for all flows — used by Landing and TopBar.
+// Metadata for all flows, used by Landing and TopBar.
 // Order here controls the landing page order; category controls grouping.
 export const FLOWS = [
   {
@@ -66,7 +66,7 @@ export const FLOWS = [
   {
     id: 'export',
     title: 'Export FHIR data',
-    subtitle: 'Download everything or selected cohorts — FHIR NDJSON, per-patient bundles, or a flat CSV table',
+    subtitle: 'Download everything or selected cohorts. FHIR NDJSON, per-patient bundles, or a flat CSV table',
     icon: '📤',
     accent: '#0d9488',
     category: 'Data management',
@@ -82,7 +82,7 @@ export const FLOWS = [
   {
     id: 'vitals',
     title: 'Generate synthetic ICU vitals',
-    subtitle: 'TimeAutoDiff — 10 vital signs over 25 timesteps, optionally conditioned',
+    subtitle: 'TimeAutoDiff. 10 vital signs over 25 timesteps, optionally conditioned',
     icon: '📈',
     accent: '#0891b2',
     category: 'Synthetic data',
@@ -98,7 +98,7 @@ export const FLOWS = [
   {
     id: 'twins',
     title: 'Find digital twins',
-    subtitle: 'Pick a subject and matching attributes — search existing cohorts or generate candidates',
+    subtitle: 'Pick a subject and matching attributes. Search existing cohorts or generate candidates',
     icon: '🧑‍🤝‍🧑',
     accent: '#db2777',
     category: 'Digital twins',

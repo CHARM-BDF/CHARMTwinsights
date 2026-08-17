@@ -113,7 +113,7 @@
             Defaults to <code>external</code> if left blank.
           </div>
           <div v-else class="muted" style="margin-top: 0.3rem">
-            Auto-suggested from the current timestamp — edit if you want a custom name.
+            Auto-suggested from the current timestamp. Edit if you want a custom name.
           </div>
         </div>
 
@@ -255,7 +255,7 @@ const parseStatus = computed(() => {
   }
 })
 
-// Cheap informational count — used in the Commit summary as a heads-up,
+// Cheap informational count, used in the Commit summary as a heads-up,
 // NOT for validation. Authoritative validation happens server-side at commit
 // when the bundle is POSTed to HAPI.
 const patientCount = computed(() => {

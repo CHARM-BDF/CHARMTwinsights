@@ -808,10 +808,10 @@ def export_fhir_data(cohort_id: Optional[List[str]] = Query(None),
                      format: Optional[List[str]] = Query(None)):
     """
     Export the FHIR store as a zip. Formats (repeat ?format= for several in
-    one archive): ndjson (default) — FHIR Bulk Data layout, one NDJSON file
-    per resource type; bundles — Synthea-style layout, one Bundle file per
-    patient plus provider files; flat — one CSV row per patient with 0/1
-    indicator columns. With several formats each lands under its own
+    one archive): ndjson (default) is the FHIR Bulk Data layout, one NDJSON
+    file per resource type; bundles is the Synthea-style layout, one Bundle
+    file per patient plus provider files; flat is one CSV row per patient
+    with 0/1 indicator columns. With several formats each lands under its own
     directory. Repeat ?cohort_id= to scope the export to specific cohorts;
     omit it to export everything.
 
@@ -854,7 +854,7 @@ async def twin_attribute_counts(request: AttributeCountsRequest):
     """
     How many patients in the store share each of the subject's attributes.
     Served from a store-wide cache (stale-while-revalidate); returns
-    {"status": "building"} until the first build completes — callers poll.
+    {"status": "building"} until the first build completes. Callers poll.
     """
     try:
         finder = TwinFinder(settings.hapi_url)

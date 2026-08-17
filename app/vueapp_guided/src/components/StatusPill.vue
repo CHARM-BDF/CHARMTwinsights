@@ -11,7 +11,7 @@ import axios from 'axios'
 import { store } from '../state.js'
 
 // Poll /health to reflect live status. If the router is unreachable we degrade
-// gracefully to an "offline" label — no hard errors.
+// gracefully to an "offline" label, with no hard errors.
 const status = ref('unknown')
 
 let timer = null

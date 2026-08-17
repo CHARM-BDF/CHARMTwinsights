@@ -238,5 +238,5 @@ check("writer registry covers all formats",
 check("type lists sane", "Patient" in PATIENT_TYPES and "Organization" in REFERENCE_TYPES)
 
 print()
-print("FAILURES:", fails if fails else "none — all tests passed")
+print("FAILURES:", fails if fails else "none, all tests passed")
 sys.exit(1 if fails else 0)

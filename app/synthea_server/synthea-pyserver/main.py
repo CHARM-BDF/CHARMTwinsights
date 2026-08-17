@@ -408,7 +408,7 @@ def validate_datatype(datatype: str) -> tuple[bool, str]:
 def validate_fhir_bundle(bundle: dict) -> tuple[bool, str]:
     """Basic structural validation of a FHIR Bundle.
 
-    Only checks shape — does not modify or convert input. HAPI is the
+    Only checks shape. Does not modify or convert input. HAPI is the
     authoritative FHIR validator; we just ensure the input is a dict
     with the right top-level fields before forwarding.
 
@@ -2495,7 +2495,7 @@ async def get_random_patient_pdf():
 
 
 # Every resource type the generation/ingestion pipelines cohort-tag. A cohort
-# delete must sweep all of them — deleting only Patients leaves tens of
+# delete must sweep all of them. Deleting only Patients leaves tens of
 # thousands of orphaned clinical and provider resources per cohort.
 COHORT_TRACE_TYPES = [
     "Patient", "Condition", "MedicationRequest", "MedicationStatement",
@@ -2548,9 +2548,9 @@ def sweep_cohort_traces(hapi_url, dead_cohorts, live_cohorts):
 
     Per resource carrying a dead cohort tag: if it is also tagged into a live
     cohort (possible for re-ingested data), only the dead tags are stripped;
-    otherwise the resource is deleted. Uses the drain pattern — refetch the
-    first search page until empty — so paging is immune to the deletions
-    shifting offsets.
+    otherwise the resource is deleted. Uses the drain pattern, refetching the
+    first search page until it comes back empty, so paging is immune to the
+    deletions shifting offsets.
 
     Returns {"deleted": {type: n}, "tags_stripped": {type: n}, "failed": n}.
     """
@@ -2560,7 +2560,7 @@ def sweep_cohort_traces(hapi_url, dead_cohorts, live_cohorts):
 
     def _fetch_page(url):
         # A single failed page fetch must not kill a sweep that has already
-        # deleted thousands of resources — retry, then give up on this lane.
+        # deleted thousands of resources. Retry, then give up on this lane.
         for attempt in range(3):
             try:
                 r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=120)
@@ -2601,7 +2601,7 @@ def sweep_cohort_traces(hapi_url, dead_cohorts, live_cohorts):
                     else:
                         to_delete.append(res["id"])
 
-                # One transaction bundle deletes the whole page — individual
+                # One transaction bundle deletes the whole page. Individual
                 # DELETEs at this volume saturate HAPI for everyone else.
                 if to_delete:
                     tx = {"resourceType": "Bundle", "type": "transaction", "entry": [
@@ -2621,7 +2621,7 @@ def sweep_cohort_traces(hapi_url, dead_cohorts, live_cohorts):
                         logger.error(
                             f"Batch delete of {len(to_delete)} {rt} failed: {str(e)[:200]}")
                 if not progressed:
-                    break  # page of pure failures — avoid spinning forever
+                    break  # page of pure failures, so avoid spinning forever
     return {"deleted": deleted, "tags_stripped": stripped, "failed": failed}
 
 

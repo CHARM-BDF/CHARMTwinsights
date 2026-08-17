@@ -1,7 +1,7 @@
 <template>
   <Wizard
     title="Export FHIR data"
-    subtitle="Download the whole store or selected cohorts as a zip — FHIR NDJSON, per-patient bundles, or a flat CSV table."
+    subtitle="Download the whole store or selected cohorts as a zip. Choose FHIR NDJSON, per-patient bundles, or a flat CSV table."
     icon="📦"
     accent="#0d9488"
     :steps="steps"
@@ -64,7 +64,7 @@
       <h2>Format &amp; download</h2>
 
       <p class="muted" style="margin: -0.2rem 0 0.9rem; font-size:0.9rem">
-        Pick one or more — several formats come back in one zip, each in its own folder.
+        Pick one or more. Several formats come back in one zip, each in its own folder.
       </p>
 
       <div class="mode-grid">
@@ -87,15 +87,15 @@
       </div>
 
       <p v-if="bothFhirLayouts" class="muted redundancy-note">
-        Note: NDJSON and per-patient bundles hold the same resources in two layouts —
-        picking both roughly doubles the build time for duplicate data.
+        Note: NDJSON and per-patient bundles hold the same resources in two layouts.
+        Picking both roughly doubles the build time for duplicate data.
       </p>
 
       <div class="summary">
         <h3>About to export</h3>
         <ul>
           <li v-if="data.scope === 'all'">
-            <strong>Everything</strong> — all cohorts
+            <strong>Everything</strong>. All cohorts
             <template v-if="totalPatients != null"> (~<strong>{{ totalPatients }}</strong> patients)</template>
           </li>
           <template v-else>
@@ -103,14 +103,14 @@
             <li>~<strong>{{ selectedPatients }}</strong> patients</li>
           </template>
           <li v-for="f in selectedFormats" :key="f.key">
-            <template v-if="data.formats.length > 1"><code>{{ f.key }}/</code> — </template>
+            <template v-if="data.formats.length > 1"><code>{{ f.key }}/</code> · </template>
             <span v-html="f.summary"></span>
           </li>
         </ul>
       </div>
 
       <p v-if="downloadStarted" class="muted" style="font-size:0.85rem; margin-top:1rem">
-        Preparing on the server — the download starts when the zip is built
+        Preparing on the server. The download starts when the zip is built
         (large stores can take a minute or two). Check your browser's downloads.
       </p>
     </template>
@@ -128,8 +128,8 @@ const FORMATS = [
     key: 'ndjson',
     icon: '🧬',
     title: 'FHIR NDJSON',
-    sub: 'Full fidelity — one file per resource type (Bulk Data layout), providers included',
-    summary: 'Format: <strong>one NDJSON file per FHIR resource type</strong> — full records '
+    sub: 'Full fidelity. One file per resource type (Bulk Data layout), providers included',
+    summary: 'Format: <strong>one NDJSON file per FHIR resource type</strong>. Full records '
       + 'plus the provider/reference resources they point at, with <code>manifest.json</code> '
       + '(per-type count verification) and a <code>README.md</code>',
   },
@@ -137,17 +137,17 @@ const FORMATS = [
     key: 'bundles',
     icon: '🗃️',
     title: 'Per-patient bundles',
-    sub: 'The layout Synthea generates — one Bundle file per patient, plus provider files',
+    sub: 'The layout Synthea generates. One Bundle file per patient, plus provider files',
     summary: 'Format: <strong>one FHIR Bundle file per patient</strong> (all of their resources), '
-      + 'plus <code>practitionerInformation.json</code> and <code>hospitalInformation.json</code> '
-      + '— the same file structure Synthea generates',
+      + 'plus <code>practitionerInformation.json</code> and <code>hospitalInformation.json</code>.'
+      + ' This is the same file structure Synthea generates.',
   },
   {
     key: 'flat',
     icon: '📊',
     title: 'Flat table (CSV)',
-    sub: 'ML-ready — one row per patient, 0/1 columns per condition/medication/procedure',
-    summary: 'Format: <strong><code>patients_flat.csv</code></strong> — demographics + indicator '
+    sub: 'ML-ready. One row per patient, 0/1 columns per condition/medication/procedure',
+    summary: 'Format: <strong><code>patients_flat.csv</code></strong>. Demographics + indicator '
       + 'columns, with <code>data_dictionary.json</code> mapping columns to labels',
   },
 ]

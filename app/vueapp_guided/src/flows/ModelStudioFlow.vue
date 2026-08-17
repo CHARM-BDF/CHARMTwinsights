@@ -113,7 +113,7 @@
       <template v-if="data.mode === 'register'">
         <h2>Schemas &amp; examples</h2>
         <p class="muted">
-          Optional — leave blank if the container has <code>/app/input_schema.{yaml,json}</code>.
+          Optional. Leave blank if the container has <code>/app/input_schema.{yaml,json}</code>.
         </p>
 
         <div class="field">
@@ -149,7 +149,7 @@ import { store, goHome } from '../state.js'
 const mockModels = [
   {
     image: 'coxcopdmodel:latest',
-    title: 'Cox PH — COPD risk',
+    title: 'Cox PH: COPD risk',
     authors: 'Lakshmi Anandan, Shawn O\'Neil',
     short_description: 'Survival model predicting 5-year COPD outcomes.',
     inputSchemaStub: '{ ethnicity, sex_at_birth, bmi, age_at_time_0, ... }',
@@ -210,7 +210,7 @@ function toggleExpand(image) {
 
 function onFinish() {
   if (data.mode === 'register') {
-    alert('Submit registration — stub.')
+    alert('Submit registration (stub).')
   }
   goHome()
 }

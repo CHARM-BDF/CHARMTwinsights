@@ -1,7 +1,7 @@
 <template>
   <Wizard
     title="Generate synthetic ICU vitals"
-    subtitle="TimeAutoDiff — 10 vital signs over 25 hourly timesteps."
+    subtitle="TimeAutoDiff. 10 vital signs over 25 hourly timesteps."
     icon="📈"
     accent="#0891b2"
     :steps="steps"
@@ -156,7 +156,7 @@
         </div>
         <p class="muted" style="font-size:0.82rem; margin:0">
           Note: the chart and the downloaded JSON are two independent samples from the
-          model — the JSON is not the exact series shown above.
+          model. The JSON is not the exact series shown above.
         </p>
       </div>
 
@@ -176,11 +176,11 @@
             <button
               :class="{ active: chartMode === 'patient' }"
               @click="chartMode = 'patient'"
-            >Per patient — 10 vitals</button>
+            >Per patient · 10 vitals</button>
             <button
               :class="{ active: chartMode === 'feature' }"
               @click="chartMode = 'feature'"
-            >All patients — one vital</button>
+            >All patients · one vital</button>
           </div>
 
           <!-- Per-patient controls -->
@@ -505,7 +505,7 @@ function drawFeatureChart() {
       plugins: {
         title: {
           display: true,
-          text: `“${feat}” — all ${batchResult.value.length} patients + ${aggregateLine.value}`,
+          text: `“${feat}” · all ${batchResult.value.length} patients + ${aggregateLine.value}`,
           font: { size: 13 },
         },
         legend: {

@@ -3,7 +3,7 @@
     <div class="hero">
       <h1>What would you like to do?</h1>
       <p class="lede">
-        Choose a guided flow below. Each is a short, step-by-step wizard — you can always
+        Choose a guided flow below. Each is a short, step-by-step wizard. You can always
         back out and pick something else.
       </p>
     </div>

@@ -203,5 +203,5 @@ except ValueError:
     check("empty selection rejected", True)
 
 print()
-print("FAILURES:", fails if fails else "none — all tests passed")
+print("FAILURES:", fails if fails else "none, all tests passed")
 sys.exit(1 if fails else 0)

@@ -85,7 +85,7 @@
             <button class="ghost small-btn" @click="cleanupConfirm = false">Cancel</button>
           </template>
           <span v-if="cleanupState === 'running'" class="state-msg" style="padding:0">
-            <span class="spinner"></span> Cleaning up — scanning the whole store…
+            <span class="spinner"></span> Cleaning up. Scanning the whole store…
           </span>
           <div v-if="cleanupState === 'done'" class="alert-ok" style="margin:0">✓ {{ cleanupSummary }}</div>
           <div v-if="cleanupState === 'error'" class="alert-err" style="margin:0">
@@ -478,8 +478,8 @@ async function runCleanup() {
       ? `Removed traces of ${dead} deleted cohort(s): ${resp.resources_deleted} resources deleted`
         + (resp.tags_stripped ? `, ${resp.tags_stripped} shared resources untagged` : '')
         + (resp.failed ? ` (${resp.failed} failures)` : '')
-        + (resp.expunge?.ok ? ' — storage expunged.' : '.')
-      : 'No leftovers found — the store is clean.'
+        + (resp.expunge?.ok ? '. Storage expunged.' : '.')
+      : 'No leftovers found. The store is clean.'
     cleanupState.value = 'done'
     await loadCohorts()
   } catch (e) {
@@ -516,9 +516,9 @@ async function loadPatients() {
   }
 }
 
-// (Cohort-change side effects — loading patients, clearing stale detail state —
+// Cohort-change side effects (loading patients, clearing stale detail state)
 // live in a single watch near the step gating at the bottom of this script,
-// after everything it touches has been declared.)
+// after everything it touches has been declared.
 
 // Patient search
 const patientSearch = ref('')
@@ -709,7 +709,7 @@ async function deleteCohort() {
   try {
     await axios.delete(`${store.apiBase}/synthetic/synthea/delete-cohort/${data.cohortId}`)
     // Refresh the list, clear the (now dangling) selection, and return to the
-    // cohort picker — staying on the detail step of a deleted cohort is a trap.
+    // cohort picker. Staying on the detail step of a deleted cohort is a trap.
     await loadCohorts()
     data.cohortId = ''
     patientsFetched = false

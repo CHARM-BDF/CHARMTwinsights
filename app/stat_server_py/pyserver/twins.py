@@ -97,7 +97,7 @@ class TwinFindRequest(BaseModel):
 
 class AttributeCountsRequest(BaseModel):
     """Ask how many patients in the store share each of the subject's
-    attributes — served from the store-wide count cache."""
+    attributes. Served from the store-wide count cache."""
     subject_id: str
     demographics: Optional[TwinDemographics] = None
     conditions: List[TwinCriteriaItem] = Field(default_factory=list)
@@ -387,7 +387,7 @@ class TwinFinder:
         }
         selected_clinical = {k: v for k, v in clinical.items() if v[0]}
         if not use_demo and not selected_clinical:
-            raise ValueError("No attributes selected — pick at least one demographic or clinical attribute.")
+            raise ValueError("No attributes selected. Pick at least one demographic or clinical attribute.")
 
         # Candidates
         patients, patients_complete = self._fetch_paged("Patient", req.cohort_id, req.max_candidates)
@@ -398,7 +398,7 @@ class TwinFinder:
         }
 
         # Clinical features, fetched per resource type in bounded chunks of
-        # candidate ids — deterministic and complete, unlike deep-paging the
+        # candidate ids. Deterministic and complete, unlike deep-paging the
         # whole store (see _features_by_patient). All categories are fetched
         # (not just the selected ones): scoring uses the selected subset, and
         # the attribute-prevalence block uses all of them.
@@ -473,7 +473,7 @@ class TwinFinder:
         try:
             sp = self.subject_profile(req.subject_id)
         except Exception as e:
-            logger.warning(f"Prevalence skipped — could not load subject profile: {e}")
+            logger.warning(f"Prevalence skipped, could not load subject profile: {e}")
             return None
 
         out: Dict[str, Any] = {"of": len(candidates)}
@@ -521,7 +521,7 @@ class TwinFinder:
 
         total = data["patient_total"]
         # The requested attributes come from the subject's own profile, so the
-        # subject is among the counted patients — report "other subjects".
+        # subject is among the counted patients, so report "other subjects".
         out: Dict[str, Any] = {
             "status": "ready",
             "stale": stale,

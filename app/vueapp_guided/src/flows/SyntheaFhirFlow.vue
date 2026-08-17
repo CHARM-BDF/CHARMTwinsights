@@ -236,7 +236,7 @@ onMounted(async () => {
     const { data: resp } = await axios.get(`${store.apiBase}/synthetic/synthea/demographics/states`)
     availableStates.value = resp.states ?? []
   } catch {
-    statesError.value = 'Could not load state list — type a state name manually.'
+    statesError.value = 'Could not load state list. Type a state name manually.'
   } finally {
     statesLoading.value = false
   }
@@ -338,7 +338,7 @@ async function onFinish() {
       num_patients: data.numPatients,
       num_years: data.numYears,
       // 'auto' passes through the router untouched and makes the synthea
-      // server assign a sequential Cohort-No-X name — matching the "sequential
+      // server assign a sequential Cohort-No-X name, matching the "sequential
       // name" promise in the help text. ('default'/blank would auto-name too,
       // but with the router's timestamp format instead.)
       cohort_id: data.cohortId || 'auto',
