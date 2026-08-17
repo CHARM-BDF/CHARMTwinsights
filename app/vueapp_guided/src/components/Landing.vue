@@ -1,5 +1,7 @@
 <template>
   <section class="landing">
+    <SampleDataBanner :key="bannerKey" @loaded="bannerKey++" />
+
     <div class="hero">
       <h1>What would you like to do?</h1>
       <p class="lede">
@@ -34,8 +36,12 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { FLOWS, startFlow } from '../state.js'
+import SampleDataBanner from './SampleDataBanner.vue'
+
+// Bumping this remounts the banner, so it re-checks the store after a load.
+const bannerKey = ref(0)
 
 const categories = computed(() => {
   const seen = new Set()

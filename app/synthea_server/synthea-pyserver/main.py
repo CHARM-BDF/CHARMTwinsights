@@ -27,7 +27,9 @@ import asyncio
 from datetime import datetime
 import random
 import csv
+import io
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .generate_pdf import extract_patient_info_for_pdf, generate_patient_pdf
 
@@ -3270,3 +3272,286 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
+
+
+# ─── sample dataset loader ───────────────────────────────────────────────────
+# First-run convenience: pull the published sample dataset from Hugging Face
+# into an empty HAPI store, so the app has something to explore without
+# waiting on a Synthea generation run.
+
+SAMPLE_REPO = "anas-elghafari/synthetic-patients-FHIR-data"
+SAMPLE_API = f"https://huggingface.co/api/datasets/{SAMPLE_REPO}"
+SAMPLE_FILE_URL = f"https://huggingface.co/datasets/{SAMPLE_REPO}/resolve/main"
+SAMPLE_PROVIDER_FILES = ["bundles/practitionerInformation.json",
+                         "bundles/hospitalInformation.json"]
+_sample_info_cache = {"data": None, "ts": 0.0}
+SAMPLE_INFO_TTL = 3600
+# Parallel download+POST lanes for the sample load. A handful cuts the wall
+# clock a lot (most of each file is network) without swamping HAPI.
+SAMPLE_LOAD_WORKERS = 4
+
+
+def _hf_get(url, timeout=60):
+    r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    return r
+
+
+def _hf_list_bundles():
+    """Every file under bundles/ with its size.
+
+    The tree API pages at 50 entries and advertises the next page in a Link
+    header, so a single call sees only a fraction of a 900-file dataset.
+    """
+    url = f"{SAMPLE_API}/tree/main/bundles?recursive=true&expand=true"
+    files = []
+    while url:
+        r = _hf_get(url)
+        for f in r.json():
+            if f.get("type") == "file" and f.get("path", "").endswith(".json"):
+                lfs = f.get("lfs") or {}
+                files.append({"path": f["path"],
+                              "size": lfs.get("size") or f.get("size") or 0})
+        url = r.links.get("next", {}).get("url")
+    return files
+
+
+def _sample_cohort_names():
+    """Cohort names in the dataset, read from the flat table's cohorts column.
+    The export manifests only record the requested scope, which was the whole
+    store, so they carry no cohort list."""
+    r = _hf_get(f"{SAMPLE_FILE_URL}/flat/patients_flat.csv", timeout=120)
+    rows = csv.reader(io.StringIO(r.text))
+    header = next(rows, [])
+    try:
+        idx = header.index("cohorts")
+    except ValueError:
+        return []
+    names = set()
+    for row in rows:
+        if len(row) > idx and row[idx]:
+            names.update(c for c in row[idx].split(";") if c)
+    return sorted(names)
+
+
+def _sample_dataset_info():
+    """Describe the published sample dataset: cohorts, patients, resources and
+    download size. Cached, since it costs several HTTP calls."""
+    now = time.time()
+    if _sample_info_cache["data"] and now - _sample_info_cache["ts"] < SAMPLE_INFO_TTL:
+        return _sample_info_cache["data"]
+
+    bundle_files = _hf_list_bundles()
+    total_bytes = sum(f["size"] for f in bundle_files)
+    patient_files = [f["path"] for f in bundle_files
+                     if f["path"] not in SAMPLE_PROVIDER_FILES
+                     and not f["path"].endswith("manifest.json")]
+
+    manifest = _hf_get(f"{SAMPLE_FILE_URL}/bundles/manifest.json").json()
+    try:
+        cohorts = _sample_cohort_names()
+    except Exception as e:
+        logger.warning(f"Sample info: could not read cohort names: {e}")
+        cohorts = []
+
+    info = {
+        "repo_id": SAMPLE_REPO,
+        "url": f"https://huggingface.co/datasets/{SAMPLE_REPO}",
+        "patients": manifest.get("patients"),
+        "total_resources": manifest.get("total_resources"),
+        "cohorts": cohorts,
+        "patient_files": len(patient_files),
+        "download_bytes": total_bytes,
+        "download_mb": round(total_bytes / 1048576, 1),
+        "generated_with": "Synthea, via this application",
+        # Measured at roughly 2.5s per patient bundle with SAMPLE_LOAD_WORKERS
+        # lanes: download, convert to a transaction, and PUT into HAPI.
+        "estimated_load_minutes": max(1, round(len(patient_files) * 2.5 / 60)),
+    }
+    _sample_info_cache["data"] = info
+    _sample_info_cache["ts"] = now
+    return info
+
+
+def _load_sample_dataset(job: "JobStatus", hapi_url: str, limit: int = 0):
+    """Download the sample bundles from Hugging Face and put them in HAPI.
+
+    Bundles carry their original urn:charm:* tags, so cohort membership,
+    source and generation settings are restored as they were. Group resources
+    are not in the export, so they are rebuilt from the tags at the end.
+    """
+    job.status = "running"
+    job.started_at = datetime.now()
+    job.current_phase = "Listing dataset files"
+
+    all_files = [f["path"] for f in _hf_list_bundles()
+                 if not f["path"].endswith("manifest.json")]
+    provider = [p for p in SAMPLE_PROVIDER_FILES if p in all_files]
+    patients = sorted(p for p in all_files if p not in provider)
+    if limit and limit > 0:
+        patients = patients[:limit]
+    total = len(provider) + len(patients)
+    job.total_chunks = total
+    logger.info(f"Sample load: {len(patients)} patient bundles, {len(provider)} provider files")
+
+    cohort_members = {}   # cohort_id -> set(patient_id)
+    loaded, failed = 0, 0
+    started = time.time()
+    tally_lock = threading.Lock()
+
+    def push(path):
+        """Download one bundle and PUT it into HAPI as a transaction."""
+        nonlocal loaded, failed
+        for attempt in (1, 2, 3):
+            try:
+                bundle = _hf_get(f"{SAMPLE_FILE_URL}/{path}", timeout=300).json()
+                # Exports are 'collection' bundles; PUT-by-id preserves the
+                # resource ids so references keep resolving.
+                bundle = convert_to_transaction_bundle(bundle)
+                size = len(json.dumps(bundle))
+                r = requests.post(hapi_url, json=bundle,
+                                  headers={"Content-Type": "application/fhir+json"},
+                                  timeout=max(60, min(600, size / 3000)))
+                r.raise_for_status()
+                found = []
+                for entry in bundle.get("entry", []):
+                    res = entry.get("resource", {})
+                    if res.get("resourceType") != "Patient" or not res.get("id"):
+                        continue
+                    for tag in (res.get("meta", {}).get("tag") or []):
+                        if tag.get("system") == COHORT_TAG_SYSTEM_URN and tag.get("code"):
+                            found.append((tag["code"], res["id"]))
+                with tally_lock:
+                    for cohort, pid in found:
+                        cohort_members.setdefault(cohort, set()).add(pid)
+                    loaded += 1
+                return True
+            except Exception as e:
+                logger.warning(f"Sample load: attempt {attempt} failed for {path}: {str(e)[:160]}")
+                time.sleep(3 * attempt)
+        with tally_lock:
+            failed += 1
+        return False
+
+    def mark_progress():
+        with tally_lock:
+            done = loaded + failed
+        job.completed_chunks = done
+        job.progress = round(done / total, 4)
+        if done >= 5:
+            rate = (time.time() - started) / done
+            job.estimated_remaining_seconds = int(rate * (total - done))
+        return done
+
+    # Providers first, and serially, so the shared Organization/Practitioner
+    # records exist before any patient references them.
+    for i, path in enumerate(provider, 1):
+        job.current_phase = f"Loading provider resources ({i}/{len(provider)})"
+        push(path)
+        mark_progress()
+
+    # Patient bundles are independent of each other, so they go in parallel.
+    # Most of the per-file cost is download plus HAPI round trip, and a few
+    # lanes cut the wall clock substantially without overloading HAPI.
+    with ThreadPoolExecutor(max_workers=SAMPLE_LOAD_WORKERS) as pool:
+        futures = [pool.submit(push, p) for p in patients]
+        for _ in as_completed(futures):
+            done = mark_progress()
+            job.current_phase = f"Loading patient records ({max(0, done - len(provider))} of {len(patients)})"
+
+    # Rebuild the cohort Groups that list-all-cohorts reads.
+    job.current_phase = "Rebuilding cohort groups"
+    job.estimated_remaining_seconds = None
+    groups = 0
+    for cohort_id, pids in cohort_members.items():
+        try:
+            upsert_group(hapi_url, cohort_id, pids, None)
+            groups += 1
+        except Exception as e:
+            logger.error(f"Sample load: could not create Group/{cohort_id}: {e}")
+
+    job.status = "completed"
+    job.completed_at = datetime.now()
+    job.progress = 1.0
+    job.current_phase = "done"
+    job.result = {
+        "patients_loaded": loaded - len(provider),
+        "provider_files": len(provider),
+        "files_failed": failed,
+        "cohorts_created": groups,
+        "cohorts": sorted(cohort_members),
+        "source": SAMPLE_REPO,
+    }
+    logger.info(f"Sample load complete: {job.result}")
+
+
+@app.get("/sample-data/info", response_class=JSONResponse)
+def sample_data_info():
+    """What the published sample dataset contains, plus whether this store is
+    empty (which is when offering it makes sense)."""
+    hapi_url = "http://hapi:8080/fhir"
+    store_patients = None
+    try:
+        r = requests.get(f"{hapi_url}/Patient?_summary=count",
+                         headers={"Accept": "application/fhir+json"}, timeout=15)
+        r.raise_for_status()
+        store_patients = r.json().get("total")
+    except Exception as e:
+        logger.warning(f"Sample info: could not count patients: {e}")
+
+    payload = {"store_patients": store_patients, "store_empty": store_patients == 0}
+    try:
+        payload["dataset"] = _sample_dataset_info()
+    except Exception as e:
+        logger.warning(f"Sample info: could not reach Hugging Face: {e}")
+        payload["dataset"] = None
+        payload["dataset_error"] = str(e)[:200]
+    return payload
+
+
+@app.post("/sample-data/load", response_class=JSONResponse)
+def sample_data_load(force: bool = Query(False), limit: int = Query(0, ge=0)):
+    """Load the sample dataset into HAPI. Refuses on a non-empty store unless
+    force=true, so it cannot quietly mix into real work. limit caps how many
+    patient bundles are pulled, which is useful for a quick trial run."""
+    hapi_url = "http://hapi:8080/fhir"
+    try:
+        r = requests.get(f"{hapi_url}/Patient?_summary=count",
+                         headers={"Accept": "application/fhir+json"}, timeout=15)
+        r.raise_for_status()
+        existing = r.json().get("total", 0)
+    except Exception:
+        return JSONResponse(status_code=500, content={"error": "HAPI FHIR server is not reachable."})
+
+    if existing and not force:
+        return JSONResponse(status_code=409, content={
+            "error": f"The store already holds {existing} patients. "
+                     f"Pass force=true to load the sample data anyway."})
+
+    job_id = str(uuid.uuid4())
+    job = JobStatus(job_id, {"action": "load-sample-data", "repo": SAMPLE_REPO,
+                             "limit": limit or None})
+    with jobs_lock:
+        jobs[job_id] = job
+
+    def run():
+        try:
+            _load_sample_dataset(job, hapi_url, limit=limit)
+        except Exception as e:
+            job.status = "failed"
+            job.error = str(e)[:500]
+            job.completed_at = datetime.now()
+            logger.error(f"Sample load failed: {e}", exc_info=True)
+
+    threading.Thread(target=run, name=f"sample-load-{job_id[:8]}", daemon=True).start()
+    return {"job_id": job_id, "status": "queued", "repo": SAMPLE_REPO}
+
+
+@app.get("/sample-data/load/jobs/{job_id}", response_class=JSONResponse)
+def sample_data_load_status(job_id: str):
+    """Progress of a sample-data load job."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return job.to_dict()

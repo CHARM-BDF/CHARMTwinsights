@@ -423,3 +423,67 @@ async def get_cities_for_state(state: str):
         logger.error(f"Error contacting Synthea backend (cities): {e}")
         raise HTTPException(status_code=500, detail="Synthea server unreachable")
 
+
+
+@router.get("/sample-data/info", response_class=JSONResponse)
+async def sample_data_info():
+    """
+    Description of the published sample dataset, plus whether this FHIR store
+    is currently empty. The guided UI uses this to decide whether to offer the
+    sample data on first run.
+    """
+    url = f"{settings.synthea_server_url}/sample-data/info"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea error (sample-data/info): {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code,
+                            detail=e.response.text or "Error fetching sample dataset info")
+    except httpx.RequestError as e:
+        logger.error(f"Error fetching sample dataset info: {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+@router.post("/sample-data/load", response_class=JSONResponse)
+async def sample_data_load(force: bool = Query(False), limit: int = Query(0, ge=0)):
+    """
+    Start loading the published sample dataset into HAPI. Returns a job id to
+    poll. Refuses on a non-empty store unless force=true. limit caps how many
+    patient bundles are pulled, for a quick trial run.
+    """
+    url = f"{settings.synthea_server_url}/sample-data/load"
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            params = {"force": str(force).lower()}
+            if limit:
+                params["limit"] = limit
+            resp = await client.post(url, params=params)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Synthea error (sample-data/load): {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code,
+                            detail=e.response.text or "Error starting sample data load")
+    except httpx.RequestError as e:
+        logger.error(f"Error starting sample data load: {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
+
+
+@router.get("/sample-data/load/jobs/{job_id}", response_class=JSONResponse)
+async def sample_data_load_status(job_id: str):
+    """Progress of a sample-data load job."""
+    url = f"{settings.synthea_server_url}/sample-data/load/jobs/{job_id}"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code,
+                            detail=e.response.text or "Error fetching job status")
+    except httpx.RequestError as e:
+        logger.error(f"Error fetching sample load job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Synthea server unreachable")
