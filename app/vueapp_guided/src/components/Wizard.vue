@@ -3,7 +3,7 @@
     <!-- Flow header -->
     <div class="wizard-header">
       <div class="wizard-title-row">
-        <span class="wizard-icon" :style="{ color: accent }">{{ icon }}</span>
+        <span class="wizard-icon" :style="{ color: accent }">{{ headerIcon }}</span>
         <h1>{{ title }}</h1>
       </div>
       <p v-if="subtitle" class="wizard-subtitle">{{ subtitle }}</p>
@@ -73,7 +73,7 @@
 
 <script setup>
 import { computed } from 'vue'
-import { store, goHome, prevStep, nextStep, goToStep } from '../state.js'
+import { store, goHome, prevStep, nextStep, goToStep, getFlow } from '../state.js'
 
 const props = defineProps({
   title: { type: String, required: true },
@@ -90,6 +90,11 @@ const props = defineProps({
 })
 
 defineEmits(['finish'])
+
+// The flow list in state.js is the single source of truth for icons, so the
+// header here always matches the landing tile and the breadcrumb. The `icon`
+// prop is only a fallback for a component rendered outside a known flow.
+const headerIcon = computed(() => getFlow(store.currentFlow)?.icon || props.icon)
 
 const currentStep = computed(() => props.steps[store.currentStep])
 const isLastStep = computed(() => store.currentStep === props.steps.length - 1)

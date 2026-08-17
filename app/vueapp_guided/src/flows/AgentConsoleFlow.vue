@@ -2,7 +2,7 @@
   <div class="agent-flow">
     <div class="agent-header">
       <div class="agent-title-row">
-        <span class="agent-icon">💬</span>
+        <span class="agent-icon">{{ flowIcon }}</span>
         <h1>AI assistant (MCP)</h1>
       </div>
       <p class="muted">
@@ -39,8 +39,11 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { goHome } from '../state.js'
+import { ref, computed } from 'vue'
+import { goHome, getFlow, store } from '../state.js'
+
+// Icons live in state.js so the header, landing tile and breadcrumb agree.
+const flowIcon = computed(() => getFlow(store.currentFlow)?.icon || '')
 
 const messages = ref([
   {

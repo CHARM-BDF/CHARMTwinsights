@@ -2,7 +2,6 @@
   <Wizard
     title="Generate synthetic ICU vitals"
     subtitle="TimeAutoDiff. 10 vital signs over 25 hourly timesteps."
-    icon="📈"
     accent="#0891b2"
     :steps="steps"
     finishLabel="Generate"

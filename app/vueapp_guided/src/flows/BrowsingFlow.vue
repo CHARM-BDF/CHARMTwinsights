@@ -2,7 +2,6 @@
   <Wizard
     title="Browse cohorts & patients"
     subtitle="Pick a cohort, explore population analytics, and drill into individual patients."
-    icon="🔍"
     accent="#7c3aed"
     :steps="steps"
     finishLabel="Done"

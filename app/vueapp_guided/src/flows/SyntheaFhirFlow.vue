@@ -2,7 +2,6 @@
   <Wizard
     title="Generate synthetic FHIR patients"
     subtitle="Create a cohort of synthetic patients with Synthea, stored in the FHIR repository."
-    icon="⚗️"
     accent="#2563eb"
     :steps="steps"
     finishLabel="Start generation"

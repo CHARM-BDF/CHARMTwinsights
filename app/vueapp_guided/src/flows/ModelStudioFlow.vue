@@ -2,7 +2,6 @@
   <Wizard
     title="Browse & register models"
     subtitle="See every registered model, inspect its schema, or upload a new one."
-    icon="🧠"
     accent="#ea580c"
     :steps="steps"
     finishLabel="Done"

@@ -2,7 +2,6 @@
   <Wizard
     title="Ingest external FHIR data"
     subtitle="Upload a FHIR bundle, validate it, tag with cohort metadata, then commit."
-    icon="📨"
     accent="#059669"
     :steps="steps"
     finishLabel="Commit to FHIR store"
@@ -185,9 +184,28 @@
 
       <!-- Error -->
       <div v-if="submitState === 'error'" class="submit-state err">
-        <h3>✗ Ingestion failed</h3>
-        <p v-if="submitError.status">HTTP {{ submitError.status }}</p>
-        <pre>{{ submitError.detail }}</pre>
+        <h3>✗ {{ submitError.summary }}</h3>
+
+        <p v-if="submitError.status" class="err-meta">
+          The FHIR store rejected the bundle (HTTP {{ submitError.status }}). Nothing was stored.
+        </p>
+
+        <ul v-if="submitError.issues.length" class="issue-list">
+          <li v-for="(iss, i) in submitError.issues" :key="i" class="issue">
+            <span class="issue-sev" :class="iss.severity">{{ iss.severity }}</span>
+            <div class="issue-body">
+              <div class="issue-text">{{ iss.text }}</div>
+              <div v-if="iss.location" class="muted issue-loc">at {{ iss.location }}</div>
+            </div>
+          </li>
+        </ul>
+
+        <p v-if="submitError.hint" class="issue-hint">💡 {{ submitError.hint }}</p>
+
+        <details v-if="submitError.raw" class="raw-details">
+          <summary>Full response from the server</summary>
+          <pre>{{ submitError.raw }}</pre>
+        </details>
       </div>
     </template>
   </Wizard>
@@ -229,7 +247,7 @@ const isDragging = ref(false)
 const readError = ref('')
 const submitState = ref('idle') // 'idle' | 'loading' | 'success' | 'error'
 const submitResult = ref(null)
-const submitError = ref({ status: null, detail: '' })
+const submitError = ref({ status: null, summary: '', issues: [], hint: '', raw: '' })
 
 const apiBase = computed(() => store.apiBase)
 
@@ -346,11 +364,77 @@ function formatBytes(n) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
+// ---------- error parsing ----------
+// The API wraps the FHIR store's reply as
+//   {detail: {error, status_code, details: "<OperationOutcome as a JSON string>"}}
+// Dumping that verbatim is unreadable, so pull out the issues the store
+// actually reported and keep the full payload behind a disclosure.
+function parseIngestError(data) {
+  const out = { summary: 'Ingestion failed', issues: [], hint: '', raw: '' }
+  if (data == null) return out
+
+  const body = data?.detail ?? data
+  if (typeof body === 'string') {
+    out.summary = 'Ingestion failed'
+    out.issues = [{ severity: 'error', text: body, location: '' }]
+    out.raw = body
+    return out
+  }
+
+  out.summary = body?.error || body?.message || 'Ingestion failed'
+
+  let outcome = body?.details
+  if (typeof outcome === 'string') {
+    try {
+      outcome = JSON.parse(outcome)
+    } catch {
+      out.issues = [{ severity: 'error', text: outcome, location: '' }]
+      out.raw = outcome
+      return out
+    }
+  }
+
+  if (outcome?.resourceType === 'OperationOutcome') {
+    out.issues = (outcome.issue ?? []).map((i) => ({
+      severity: i.severity || 'error',
+      text: i.diagnostics || i.details?.text || i.code || 'No description given',
+      location: [...(i.location ?? []), ...(i.expression ?? [])].join(', '),
+    }))
+    out.raw = JSON.stringify(outcome, null, 2)
+  } else {
+    out.raw = JSON.stringify(body, null, 2)
+  }
+
+  if (!out.issues.length) {
+    out.issues = [{ severity: 'error', text: out.summary, location: '' }]
+  }
+  out.hint = hintFor(out.issues.map((i) => i.text).join(' '))
+  return out
+}
+
+// Turn the most common rejections into something actionable.
+function hintFor(text) {
+  const unknown = text.match(/Unknown resource name .?"?([A-Za-z]+)"?.? \(this name is not known in FHIR version .?"?(\w+)/)
+  if (unknown) {
+    return `"${unknown[1]}" is not a resource type in FHIR ${unknown[2]}, which this server speaks. `
+      + `It usually means the bundle was written for an older FHIR version (for example `
+      + `MedicationOrder became MedicationRequest in R4). Convert the bundle to `
+      + `FHIR ${unknown[2]} and try again.`
+  }
+  if (/Failed to parse request body as JSON/i.test(text)) {
+    return 'The server could not read the bundle as a FHIR resource. Check that the top level is a Bundle and that every entry has a valid resourceType.'
+  }
+  if (/Invalid attribute value|Unknown element|not a valid/i.test(text)) {
+    return 'One or more fields do not match the FHIR R4 schema. The location shown above points at the offending element.'
+  }
+  return ''
+}
+
 // ---------- submit ----------
 async function onFinish() {
   submitState.value = 'loading'
   submitResult.value = null
-  submitError.value = { status: null, detail: '' }
+  submitError.value = { status: null, summary: '', issues: [], hint: '', raw: '' }
 
   try {
     const payload = {
@@ -367,15 +451,7 @@ async function onFinish() {
     submitState.value = 'success'
   } catch (e) {
     const status = e?.response?.status ?? null
-    let detail = e?.response?.data?.detail ?? e?.response?.data ?? e?.message ?? 'Unknown error'
-    if (typeof detail !== 'string') {
-      try {
-        detail = JSON.stringify(detail, null, 2)
-      } catch {
-        detail = String(detail)
-      }
-    }
-    submitError.value = { status, detail }
+    submitError.value = { status, ...parseIngestError(e?.response?.data ?? e?.message) }
     submitState.value = 'error'
   }
 }
@@ -550,6 +626,47 @@ textarea {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.err-meta { font-size: 0.88rem; margin: 0 0 0.6rem; color: var(--text); }
+
+.issue-list { list-style: none; margin: 0 0 0.6rem; padding: 0; display: flex; flex-direction: column; gap: 0.45rem; }
+.issue {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  background: var(--surface);
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.7rem;
+}
+.issue-sev {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  background: #fee2e2;
+  color: #b91c1c;
+  margin-top: 0.1rem;
+}
+.issue-sev.warning { background: #fef3c7; color: #b45309; }
+.issue-sev.information { background: #e0f2fe; color: #0369a1; }
+.issue-body { min-width: 0; }
+.issue-text { font-size: 0.9rem; line-height: 1.45; word-break: break-word; }
+.issue-loc { font-size: 0.8rem; margin-top: 0.15rem; font-family: ui-monospace, Menlo, monospace; }
+.issue-hint {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+  margin: 0 0 0.6rem;
+  color: var(--text);
+}
+.raw-details { margin-top: 0.2rem; }
+
 .submit-state details { margin-top: 0.5rem; }
 .submit-state summary {
   cursor: pointer;

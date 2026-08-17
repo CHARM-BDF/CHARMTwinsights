@@ -2,7 +2,6 @@
   <Wizard
     title="Apply a model to a cohort"
     subtitle="Pick a registered model, choose who to run it on, review the predictions."
-    icon="⚡"
     accent="#f59e0b"
     :steps="steps"
     finishLabel="Run predictions"

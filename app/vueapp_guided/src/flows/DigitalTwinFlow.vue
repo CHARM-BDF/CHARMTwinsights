@@ -2,7 +2,6 @@
   <Wizard
     title="Find digital twins"
     subtitle="Pick a subject, choose which of their attributes matter, then search for similar patients."
-    icon="👯"
     accent="#db2777"
     :steps="steps"
     finishLabel="Done"
@@ -347,7 +346,7 @@
               <div class="cmp-demo">
                 <div v-for="f in demoFields" :key="f.key" class="cmp-demo-row" :class="{ crit: f.crit }">
                   <span class="cmp-demo-label">{{ f.key }}</span>
-                  <span class="cmp-demo-value">{{ f.sv ?? '—' }}</span>
+                  <span class="cmp-demo-value">{{ f.sv ?? 'not recorded' }}</span>
                 </div>
               </div>
               <div v-for="cat in comparisonCats" :key="cat.key" class="cmp-cat">
@@ -398,7 +397,7 @@
                   <div v-for="f in demoFields" :key="f.key" class="cmp-demo-row" :class="{ crit: f.crit }">
                     <span class="cmp-demo-label">{{ f.key }}</span>
                     <span class="cmp-demo-value">
-                      {{ f.mv ?? '—' }}
+                      {{ f.mv ?? 'not recorded' }}
                       <span v-if="f.mark" :class="f.ok ? 'ok-mark' : 'miss-mark'">{{ f.mark }}</span>
                     </span>
                   </div>

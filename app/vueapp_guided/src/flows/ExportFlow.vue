@@ -2,7 +2,6 @@
   <Wizard
     title="Export FHIR data"
     subtitle="Download the whole store or selected cohorts as a zip. Choose FHIR NDJSON, per-patient bundles, or a flat CSV table."
-    icon="📦"
     accent="#0d9488"
     :steps="steps"
     finishLabel="⬇ Download Exported Data"
