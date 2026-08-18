@@ -187,7 +187,8 @@
         <h3>✗ {{ submitError.summary }}</h3>
 
         <p v-if="submitError.status" class="err-meta">
-          The FHIR store rejected the bundle (HTTP {{ submitError.status }}). Nothing was stored.
+          Nothing was stored (HTTP {{ submitError.status }}). The bundle is sent as a single
+          transaction, so it either lands whole or not at all.
         </p>
 
         <ul v-if="submitError.issues.length" class="issue-list">
@@ -204,6 +205,9 @@
 
         <details v-if="submitError.raw" class="raw-details">
           <summary>Full response from the server</summary>
+          <p v-if="submitError.truncated" class="muted" style="font-size:0.82rem; margin:0.4rem 0 0">
+            The server capped this reply, so it may be cut short.
+          </p>
           <pre>{{ submitError.raw }}</pre>
         </details>
       </div>
@@ -247,7 +251,7 @@ const isDragging = ref(false)
 const readError = ref('')
 const submitState = ref('idle') // 'idle' | 'loading' | 'success' | 'error'
 const submitResult = ref(null)
-const submitError = ref({ status: null, summary: '', issues: [], hint: '', raw: '' })
+const submitError = ref({ status: null, summary: '', issues: [], hint: '', raw: '', truncated: false })
 
 const apiBase = computed(() => store.apiBase)
 
@@ -370,7 +374,7 @@ function formatBytes(n) {
 // Dumping that verbatim is unreadable, so pull out the issues the store
 // actually reported and keep the full payload behind a disclosure.
 function parseIngestError(data) {
-  const out = { summary: 'Ingestion failed', issues: [], hint: '', raw: '' }
+  const out = { summary: 'Ingestion failed', issues: [], hint: '', raw: '', truncated: false }
   if (data == null) return out
 
   const body = data?.detail ?? data
@@ -382,6 +386,7 @@ function parseIngestError(data) {
   }
 
   out.summary = body?.error || body?.message || 'Ingestion failed'
+  out.truncated = !!body?.details_truncated
 
   let outcome = body?.details
   if (typeof outcome === 'string') {
@@ -434,7 +439,7 @@ function hintFor(text) {
 async function onFinish() {
   submitState.value = 'loading'
   submitResult.value = null
-  submitError.value = { status: null, summary: '', issues: [], hint: '', raw: '' }
+  submitError.value = { status: null, summary: '', issues: [], hint: '', raw: '', truncated: false }
 
   try {
     const payload = {

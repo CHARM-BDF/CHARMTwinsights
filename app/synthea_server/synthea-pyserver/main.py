@@ -762,6 +762,64 @@ def merge_group_members(existing_group, new_patient_ids):
 
 
 
+# Upper bound on how much of a HAPI error body we pass back. Big enough that a
+# realistic OperationOutcome survives intact; only a runaway reply gets cut.
+MAX_HAPI_ERROR_CHARS = 20000
+
+
+def describe_hapi_failure(status_code: int, body: str) -> str:
+    """A short, accurate label for a non-2xx reply from HAPI.
+
+    The old code called every failure a validation error, which is misleading
+    for a 500, a timeout or a missing endpoint. Prefer what the OperationOutcome
+    itself says, then fall back to the status family.
+    """
+    issue_code = None
+    try:
+        outcome = json.loads(body)
+        if outcome.get("resourceType") == "OperationOutcome":
+            issues = outcome.get("issue") or []
+            if issues:
+                issue_code = (issues[0].get("code") or "").lower()
+    except Exception:
+        pass
+
+    by_issue = {
+        "structure": "The FHIR store could not parse the bundle",
+        "invalid": "The FHIR store rejected the bundle as invalid",
+        "required": "The bundle is missing a required element",
+        "value": "The bundle has an invalid value",
+        "invariant": "The bundle violates a FHIR constraint",
+        "code-invalid": "The bundle uses a code the FHIR store does not accept",
+        "not-found": "The FHIR store could not find a referenced resource",
+        "conflict": "The write conflicted with existing data in the FHIR store",
+        "processing": "The FHIR store could not process the bundle",
+        "duplicate": "The bundle duplicates an existing resource",
+        "security": "The FHIR store refused the request for security reasons",
+        "throttled": "The FHIR store is rate limiting requests",
+        "exception": "The FHIR store hit an internal error",
+        "timeout": "The FHIR store timed out handling the bundle",
+    }
+    if issue_code in by_issue:
+        return by_issue[issue_code]
+
+    if status_code in (401, 403):
+        return "The FHIR store refused the request"
+    if status_code == 404:
+        return "The FHIR store endpoint was not found"
+    if status_code == 409:
+        return "The write conflicted with existing data in the FHIR store"
+    if status_code == 413:
+        return "The bundle is too large for the FHIR store"
+    if status_code == 422:
+        return "The FHIR store rejected the bundle as invalid"
+    if 400 <= status_code < 500:
+        return "The FHIR store rejected the bundle"
+    if status_code >= 500:
+        return "The FHIR store hit an internal error"
+    return f"The FHIR store returned an unexpected status ({status_code})"
+
+
 def post_bundle(json_file, hapi_url, tags: dict[str, str] = None, generation_settings: dict = None): # returns (success (bool), message (str), patient_ids (set of str) or None)
     """ Posts a FHIR Bundle or resource to the HAPI FHIR server. Returned patient_ids is a set of patient IDs found in the bundle, useful for cohort management.
     Args:
@@ -2985,15 +3043,24 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
         
         # Check for errors
         if r.status_code not in [200, 201]:
-            error_body = r.text[:1000] if len(r.text) > 1000 else r.text
-            logger.error(f"HAPI FHIR error: Status {r.status_code}, Body: {error_body}")
+            # Keep the whole OperationOutcome. Truncating it used to cut the
+            # JSON mid-string once a bundle produced enough issues, leaving
+            # callers with an unparseable fragment instead of a list of
+            # problems. The cap here is a runaway guard, not a display limit.
+            error_body = r.text[:MAX_HAPI_ERROR_CHARS]
+            truncated = len(r.text) > MAX_HAPI_ERROR_CHARS
+            logger.error(f"HAPI FHIR error: Status {r.status_code}, Body: {error_body[:1000]}")
             return JSONResponse(
                 status_code=r.status_code,
                 content={
                     "success": False,
-                    "error": "HAPI FHIR validation error",
+                    # Label the actual failure. Not every non-2xx from HAPI is
+                    # a validation problem, and calling a 500 or a timeout a
+                    # "validation error" sends people looking in the wrong place.
+                    "error": describe_hapi_failure(r.status_code, r.text),
                     "status_code": r.status_code,
-                    "details": error_body
+                    "details": error_body,
+                    "details_truncated": truncated,
                 }
             )
         
