@@ -43,6 +43,7 @@
             :data="data.formData"
             :schema="inputSchema"
             :renderers="renderers"
+            :config="jsonformsConfig"
             @change="onFormChange"
           />
         </div>
@@ -99,6 +100,44 @@ import { store, goHome } from '../state.js'
 import { listModels, getModel, getModelJsonSchema, predict } from '../api/models.js'
 
 const renderers = Object.freeze([...vanillaRenderers])
+
+// Always show each field's description (vue-vanilla hides it until focus by
+// default), so the schema-derived hints are visible without clicking in.
+const jsonformsConfig = { showUnfocusedDescription: true }
+
+// A compact, human-readable statement of the expected input type, derived from
+// the JSON Schema property. Enums are omitted — the dropdown already lists the
+// allowed values.
+function typeHint(prop) {
+  if (!prop || typeof prop !== 'object' || Array.isArray(prop.enum)) return ''
+  switch (prop.type) {
+    case 'number':
+      return 'Number'
+    case 'integer':
+      return 'Whole number'
+    case 'boolean':
+      return 'Yes / no'
+    case 'string':
+      return 'Text'
+    default:
+      return ''
+  }
+}
+
+// Return a copy of the input JSON Schema with a type hint appended to each
+// field's description, so the always-visible description states what kind of
+// value is expected (e.g. "Body Mass Index · Number").
+function annotateSchema(schema) {
+  if (!schema || !schema.properties) return schema
+  const properties = {}
+  for (const [name, prop] of Object.entries(schema.properties)) {
+    const hint = typeHint(prop)
+    const base = prop.description ? String(prop.description) : ''
+    const description = hint ? (base ? `${base} · ${hint}` : hint) : base
+    properties[name] = description ? { ...prop, description } : { ...prop }
+  }
+  return { ...schema, properties }
+}
 
 const steps = reactive([
   { label: 'Model', canAdvance: false },
@@ -167,7 +206,7 @@ async function selectModel(image) {
   exampleError.value = ''
   try {
     const js = await getModelJsonSchema(image)
-    inputSchema.value = js.input_schema
+    inputSchema.value = annotateSchema(js.input_schema)
     outputSchema.value = js.output_schema
   } catch (e) {
     schemaError.value = errText(e, 'Failed to load model schema')
