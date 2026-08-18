@@ -108,6 +108,17 @@ if [ "$attempt" -gt "$max_attempts" ]; then
   exit 1
 fi
 
+log "Checking router modeling jsonschema endpoint"
+schema_json="$(curl -fsS "${ROUTER_BASE_URL}/modeling/models/coxcopdmodel:latest/jsonschema")"
+if ! echo "$schema_json" | jq -e '
+  (.input_schema.type == "object")
+  and (.input_schema.properties | length >= 1)
+  and (.input_schema.properties.sex_at_birth.enum | length >= 2)
+' >/dev/null; then
+  error "Router /modeling/models/{tag}/jsonschema validation failed: ${schema_json}"
+  exit 1
+fi
+
 prediction_payload='{
   "image": "coxcopdmodel:latest",
   "input": [
