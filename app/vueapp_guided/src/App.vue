@@ -29,6 +29,7 @@ import ExportFlow from './flows/ExportFlow.vue'
 import DigitalTwinFlow from './flows/DigitalTwinFlow.vue'
 import ModelStudioFlow from './flows/ModelStudioFlow.vue'
 import ApplyModelFlow from './flows/ApplyModelFlow.vue'
+import RunPredictionFlow from './flows/RunPredictionFlow.vue'
 import AgentConsoleFlow from './flows/AgentConsoleFlow.vue'
 
 const flowMap = {
@@ -40,6 +41,7 @@ const flowMap = {
   twins: DigitalTwinFlow,
   models: ModelStudioFlow,
   apply: ApplyModelFlow,
+  run: RunPredictionFlow,
   agent: AgentConsoleFlow,
 }
 

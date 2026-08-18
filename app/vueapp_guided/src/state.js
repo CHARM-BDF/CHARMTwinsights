@@ -6,7 +6,7 @@ import { reactive } from 'vue'
 
 export const store = reactive({
   // Which flow is active. null = landing page.
-  // One of: 'synthea', 'vitals', 'browse', 'ingest', 'twins', 'models', 'apply', 'agent'
+  // One of: 'synthea', 'vitals', 'browse', 'ingest', 'twins', 'models', 'apply', 'run', 'agent'
   currentFlow: null,
 
   // Current step index within the active flow (0-based).
@@ -117,6 +117,14 @@ export const FLOWS = [
     subtitle: 'Run a registered model over a whole cohort and review results',
     icon: '▶️',
     accent: '#f59e0b',
+    category: 'Predictive models',
+  },
+  {
+    id: 'run',
+    title: 'Run a prediction',
+    subtitle: 'Pick a model, fill in its inputs from an auto-generated form, see the result',
+    icon: '🔮',
+    accent: '#f97316',
     category: 'Predictive models',
   },
   {
