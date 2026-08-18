@@ -44,8 +44,9 @@
     <template #step-1>
       <template v-if="data.mode === 'browse'">
         <h2>Registered models</h2>
-        <p v-if="loadError" class="error">{{ loadError }}</p>
-        <p v-else-if="!models.length" class="muted" style="margin-top: 0.8rem">Loading models…</p>
+        <p v-if="loadingModels" class="muted" style="margin-top: 0.8rem">Loading models…</p>
+        <p v-else-if="loadError" class="error">{{ loadError }}</p>
+        <p v-else-if="!models.length" class="muted" style="margin-top: 0.8rem">No models are registered yet.</p>
         <div class="model-list">
           <div
             v-for="m in models"
@@ -69,9 +70,9 @@
                 <div v-if="data.details[m.image].readme" class="pill">README</div>
                 <pre v-if="data.details[m.image].readme" class="schema">{{ data.details[m.image].readme }}</pre>
                 <div class="pill">input schema</div>
-                <pre class="schema">{{ JSON.stringify(data.details[m.image].input_schema, null, 2) }}</pre>
+                <pre class="schema">{{ data.details[m.image].input_schema ? JSON.stringify(data.details[m.image].input_schema, null, 2) : '(none)' }}</pre>
                 <div class="pill">output schema</div>
-                <pre class="schema">{{ JSON.stringify(data.details[m.image].output_schema, null, 2) }}</pre>
+                <pre class="schema">{{ data.details[m.image].output_schema ? JSON.stringify(data.details[m.image].output_schema, null, 2) : '(none)' }}</pre>
               </template>
               <p v-else class="muted">Loading details…</p>
             </div>
@@ -171,12 +172,16 @@ import { store, goHome } from '../state.js'
 
 const models = ref([])
 const loadError = ref('')
+const loadingModels = ref(false)
 
 onMounted(async () => {
+  loadingModels.value = true
   try {
     models.value = await listModels()
   } catch (e) {
     loadError.value = e?.response?.data?.detail || e?.message || 'Failed to load models'
+  } finally {
+    loadingModels.value = false
   }
 })
 
