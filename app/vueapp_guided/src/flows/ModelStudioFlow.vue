@@ -44,13 +44,11 @@
     <template #step-1>
       <template v-if="data.mode === 'browse'">
         <h2>Registered models</h2>
-        <div class="stub-banner">Stub</div>
-        <p style="margin-top: 0.8rem">
-          Will fetch from <code>GET /modeling/models</code>.
-        </p>
+        <p v-if="loadError" class="error">{{ loadError }}</p>
+        <p v-else-if="!models.length" class="muted" style="margin-top: 0.8rem">Loading models…</p>
         <div class="model-list">
           <div
-            v-for="m in mockModels"
+            v-for="m in models"
             :key="m.image"
             class="model-row"
             :class="{ expanded: data.expandedModel === m.image }"
@@ -64,10 +62,18 @@
               <span class="chevron">{{ data.expandedModel === m.image ? '▾' : '▸' }}</span>
             </div>
             <div v-if="data.expandedModel === m.image" class="model-detail">
-              <div class="pill">input schema</div>
-              <pre class="schema">{{ m.inputSchemaStub }}</pre>
-              <div class="pill">output schema</div>
-              <pre class="schema">{{ m.outputSchemaStub }}</pre>
+              <template v-if="data.details[m.image]?._error">
+                <p class="error">{{ data.details[m.image]._error }}</p>
+              </template>
+              <template v-else-if="data.details[m.image]">
+                <div v-if="data.details[m.image].readme" class="pill">README</div>
+                <pre v-if="data.details[m.image].readme" class="schema">{{ data.details[m.image].readme }}</pre>
+                <div class="pill">input schema</div>
+                <pre class="schema">{{ JSON.stringify(data.details[m.image].input_schema, null, 2) }}</pre>
+                <div class="pill">output schema</div>
+                <pre class="schema">{{ JSON.stringify(data.details[m.image].output_schema, null, 2) }}</pre>
+              </template>
+              <p v-else class="muted">Loading details…</p>
             </div>
           </div>
         </div>
@@ -87,6 +93,9 @@
             <input type="text" v-model="data.reg.authors" />
           </div>
         </div>
+        <p class="muted">
+          The Docker image must already exist on the model_server host before it can be registered.
+        </p>
 
         <div class="field">
           <label>Title</label>
@@ -127,6 +136,20 @@
           <label>Example inputs (JSON array)</label>
           <textarea rows="4" v-model="data.reg.examples" placeholder='[{"age": 50, "bmi": 28}]'></textarea>
         </div>
+
+        <p v-if="regError" class="error">{{ regError }}</p>
+        <div v-if="regResult" class="reg-result">
+          <p><strong>Registered {{ regResult.image }}.</strong></p>
+          <details v-if="regResult.example_predictions">
+            <summary>Example predictions</summary>
+            <pre class="schema">{{ JSON.stringify(regResult.example_predictions, null, 2) }}</pre>
+          </details>
+          <details v-if="regResult.registration_logs">
+            <summary>Registration logs</summary>
+            <pre class="schema">{{ regResult.registration_logs.stdout }}{{ regResult.registration_logs.stderr }}</pre>
+          </details>
+          <button class="ghost" type="button" @click="goHome">Done</button>
+        </div>
       </template>
 
       <template v-else>
@@ -141,49 +164,27 @@
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
+import { listModels, getModel, registerModel } from '../api/models.js'
 import Wizard from '../components/Wizard.vue'
 import { store, goHome } from '../state.js'
 
-const mockModels = [
-  {
-    image: 'coxcopdmodel:latest',
-    title: 'Cox PH: COPD risk',
-    authors: 'Lakshmi Anandan, Shawn O\'Neil',
-    short_description: 'Survival model predicting 5-year COPD outcomes.',
-    inputSchemaStub: '{ ethnicity, sex_at_birth, bmi, age_at_time_0, ... }',
-    outputSchemaStub: '{ partial_hazard, survival_probability_5_years }',
-  },
-  {
-    image: 'dpcgansmodel:latest',
-    title: 'DP-CGAN synthetic generator',
-    authors: 'CHARM team',
-    short_description: 'Differentially private conditional GAN for synthetic tabular data.',
-    inputSchemaStub: '{ n_samples, conditioning_vector }',
-    outputSchemaStub: '{ samples: [...] }',
-  },
-  {
-    image: 'irismodel:latest',
-    title: 'Iris classifier (demo)',
-    authors: 'CHARM team',
-    short_description: 'Classic demo classifier.',
-    inputSchemaStub: '{ sepal_length, sepal_width, petal_length, petal_width }',
-    outputSchemaStub: '{ species }',
-  },
-  {
-    image: 'reachablefrommodel:latest',
-    title: 'Reachable-from (demo)',
-    authors: 'CHARM team',
-    short_description: 'Graph reachability demo model.',
-    inputSchemaStub: '{ source_node, graph }',
-    outputSchemaStub: '{ reachable: [...] }',
-  },
-]
+const models = ref([])
+const loadError = ref('')
+
+onMounted(async () => {
+  try {
+    models.value = await listModels()
+  } catch (e) {
+    loadError.value = e?.response?.data?.detail || e?.message || 'Failed to load models'
+  }
+})
 
 // Reuse previously entered values if the user left and came back.
 const data = store.flowData.models ?? reactive({
   mode: 'browse',
   expandedModel: null,
+  details: {},
   reg: {
     image: '',
     title: '',
@@ -203,15 +204,50 @@ const steps = [
   { label: 'Confirm' },
 ]
 
-function toggleExpand(image) {
-  data.expandedModel = data.expandedModel === image ? null : image
+async function toggleExpand(image) {
+  if (data.expandedModel === image) { data.expandedModel = null; return }
+  data.expandedModel = image
+  if (!data.details[image]) {
+    try {
+      data.details[image] = await getModel(image)
+    } catch (e) {
+      data.details[image] = { _error: e?.response?.data?.detail || e?.message || 'Failed to load model' }
+    }
+  }
 }
 
-function onFinish() {
-  if (data.mode === 'register') {
-    alert('Submit registration (stub).')
+const regResult = ref(null)
+const regError = ref('')
+
+function parseMaybeJson(text) {
+  const t = (text || '').trim()
+  if (!t) return undefined
+  return JSON.parse(t) // may throw; caught in onFinish
+}
+
+async function onFinish() {
+  if (data.mode !== 'register') { goHome(); return }
+  regError.value = ''
+  regResult.value = null
+  try {
+    const payload = {
+      image: data.reg.image,
+      title: data.reg.title,
+      short_description: data.reg.description,
+      authors: data.reg.authors,
+    }
+    if (data.reg.readme?.trim()) payload.readme = data.reg.readme
+    const inputSchema = parseMaybeJson(data.reg.inputSchema)
+    if (inputSchema) payload.input_schema = inputSchema
+    const outputSchema = parseMaybeJson(data.reg.outputSchema)
+    if (outputSchema) payload.output_schema = outputSchema
+    const examples = parseMaybeJson(data.reg.examples)
+    if (examples) payload.examples = examples
+
+    regResult.value = await registerModel(payload)
+  } catch (e) {
+    regError.value = e?.response?.data?.detail || e?.message || 'Registration failed'
   }
-  goHome()
 }
 </script>
 
@@ -294,5 +330,18 @@ textarea {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85rem;
   resize: vertical;
+}
+
+.error { color: #dc2626; }
+
+.reg-result {
+  margin-top: 1rem;
+  padding: 1rem 1.2rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 </style>
