@@ -37,6 +37,7 @@
         <div class="form-actions">
           <button class="ghost" type="button" @click="useExample">Use example</button>
         </div>
+        <p v-if="exampleError" class="error">{{ exampleError }}</p>
         <div class="jsonforms-host">
           <JsonForms
             :data="data.formData"
@@ -90,7 +91,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, watch, onMounted } from 'vue'
 import { JsonForms } from '@jsonforms/vue'
 import { vanillaRenderers } from '@jsonforms/vue-vanilla'
 import Wizard from '../components/Wizard.vue'
@@ -99,7 +100,11 @@ import { listModels, getModel, getModelJsonSchema, predict } from '../api/models
 
 const renderers = Object.freeze([...vanillaRenderers])
 
-const steps = [{ label: 'Model' }, { label: 'Inputs' }, { label: 'Result' }]
+const steps = reactive([
+  { label: 'Model', canAdvance: false },
+  { label: 'Inputs', canAdvance: false },
+  { label: 'Result' },
+])
 
 const data = store.flowData.run ?? reactive({
   image: '',
@@ -116,10 +121,27 @@ const inputSchema = ref(null)
 const outputSchema = ref(null)
 const loadingSchema = ref(false)
 const schemaError = ref('')
+const exampleError = ref('')
 
 const running = ref(false)
 const runError = ref('')
 const lastResult = ref(null)
+
+watch(
+  () => data.image,
+  () => {
+    steps[0].canAdvance = !!data.image
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [inputSchema.value, data.formErrors.length],
+  () => {
+    steps[1].canAdvance = !!inputSchema.value && data.formErrors.length === 0
+  },
+  { immediate: true },
+)
 
 onMounted(async () => {
   loadingModels.value = true
@@ -142,6 +164,7 @@ async function selectModel(image) {
   outputSchema.value = null
   loadingSchema.value = true
   schemaError.value = ''
+  exampleError.value = ''
   try {
     const js = await getModelJsonSchema(image)
     inputSchema.value = js.input_schema
@@ -159,12 +182,13 @@ function onFormChange(event) {
 }
 
 async function useExample() {
+  exampleError.value = ''
   try {
     const detail = await getModel(data.image)
     const ex = detail.examples && detail.examples[0]
     if (ex) data.formData = { ...ex }
   } catch (e) {
-    schemaError.value = errText(e, 'Failed to load example')
+    exampleError.value = errText(e, 'Failed to load example')
   }
 }
 
