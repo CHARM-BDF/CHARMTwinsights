@@ -111,19 +111,23 @@ export const FLOWS = [
     accent: '#ea580c',
     category: 'Predictive models',
   },
-  {
-    id: 'apply',
-    title: 'Apply a model to a cohort',
-    subtitle: 'Run a registered model over a whole cohort and review results',
-    icon: '▶️',
-    accent: '#f59e0b',
-    category: 'Predictive models',
-  },
+  // Temporarily hidden until the FHIR->model feature-mapping design lands.
+  // Cohort-apply needs an authoritative, author-provided mapping spec that
+  // can't be derived; restore this tile by uncommenting. ApplyModelFlow.vue and
+  // its App.vue flowMap entry remain in place, so this only hides the tile.
+  // {
+  //   id: 'apply',
+  //   title: 'Apply a model to a cohort',
+  //   subtitle: 'Run a registered model over a whole cohort and review results',
+  //   icon: '▶️',
+  //   accent: '#f59e0b',
+  //   category: 'Predictive models',
+  // },
   {
     id: 'run',
     title: 'Run a prediction',
     subtitle: 'Pick a model, fill in its inputs from an auto-generated form, see the result',
-    icon: '🔮',
+    icon: '🎯',
     accent: '#f97316',
     category: 'Predictive models',
   },
