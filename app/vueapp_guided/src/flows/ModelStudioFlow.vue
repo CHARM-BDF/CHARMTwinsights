@@ -67,12 +67,27 @@
                 <p class="error">{{ data.details[m.image]._error }}</p>
               </template>
               <template v-else-if="data.details[m.image]">
-                <div v-if="data.details[m.image].readme" class="pill">README</div>
-                <pre v-if="data.details[m.image].readme" class="schema">{{ data.details[m.image].readme }}</pre>
+                <template v-if="data.details[m.image].readme">
+                  <div class="pill">README</div>
+                  <div
+                    class="markdown-body"
+                    v-html="renderMarkdown(data.details[m.image].readme)"
+                  ></div>
+                </template>
                 <div class="pill">input schema</div>
-                <pre class="schema">{{ data.details[m.image].input_schema ? JSON.stringify(data.details[m.image].input_schema, null, 2) : '(none)' }}</pre>
+                <pre
+                  v-if="data.details[m.image].input_schema"
+                  class="code-block"
+                  v-html="highlightJson(data.details[m.image].input_schema)"
+                ></pre>
+                <pre v-else class="code-block">(none)</pre>
                 <div class="pill">output schema</div>
-                <pre class="schema">{{ data.details[m.image].output_schema ? JSON.stringify(data.details[m.image].output_schema, null, 2) : '(none)' }}</pre>
+                <pre
+                  v-if="data.details[m.image].output_schema"
+                  class="code-block"
+                  v-html="highlightJson(data.details[m.image].output_schema)"
+                ></pre>
+                <pre v-else class="code-block">(none)</pre>
               </template>
               <p v-else class="muted">Loading details…</p>
             </div>
@@ -167,6 +182,7 @@
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
 import { listModels, getModel, registerModel } from '../api/models.js'
+import { renderMarkdown, highlightJson } from '../utils/format.js'
 import Wizard from '../components/Wizard.vue'
 import { store, goHome } from '../state.js'
 

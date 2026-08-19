@@ -53,6 +53,17 @@
         <p v-if="data.formErrors.length" class="muted">
           {{ data.formErrors.length }} field(s) need attention before running.
         </p>
+
+        <details class="curl-panel">
+          <summary>API request (curl)</summary>
+          <div class="curl-head">
+            <code class="curl-endpoint">POST {{ store.apiBase }}/modeling/predict</code>
+            <button class="ghost curl-copy" type="button" @click="copyCurl">
+              {{ copied ? '✓ Copied' : 'Copy' }}
+            </button>
+          </div>
+          <pre class="curl-code">{{ curlCommand }}</pre>
+        </details>
       </template>
     </template>
 
@@ -159,6 +170,31 @@ const exampleError = ref('')
 const running = ref(false)
 const runError = ref('')
 const lastResult = ref(null)
+
+// Live-built curl command for the exact POST /modeling/predict request the form
+// represents — the model server is primarily an API, so this shows integrators
+// how to reproduce the call from any client.
+const copied = ref(false)
+const curlCommand = computed(() => {
+  const url = `${store.apiBase}/modeling/predict`
+  const body = JSON.stringify(
+    { image: data.image || '<model:tag>', input: [data.formData ?? {}] },
+    null,
+    2,
+  )
+  return `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'`
+})
+async function copyCurl() {
+  try {
+    await navigator.clipboard.writeText(curlCommand.value)
+    copied.value = true
+    setTimeout(() => {
+      copied.value = false
+    }, 1500)
+  } catch {
+    // Clipboard API unavailable (e.g. non-secure context); ignore.
+  }
+}
 
 watch(
   () => data.image,
@@ -317,6 +353,42 @@ function onFinish() {
   transition: background 0.15s ease, color 0.15s ease;
 }
 .load-example-btn:hover { background: var(--accent); color: #fff; }
+
+.curl-panel {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+.curl-panel > summary {
+  cursor: pointer;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+.curl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.8rem;
+}
+.curl-endpoint { font-size: 0.8rem; color: var(--text-muted); }
+.curl-copy { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
+.curl-code {
+  margin: 0.4rem 0.8rem 0.8rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
 .results-table { width: 100%; border-collapse: collapse; margin-top: 0.8rem; }
 .results-table th, .results-table td {
   padding: 0.55rem 0.7rem; text-align: left;
