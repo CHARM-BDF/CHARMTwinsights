@@ -60,6 +60,8 @@ CHARMTwinsight is designed as a microservices architecture managed with `docker 
 
 **`mcp_server`**: Model Context Protocol (MCP) server for cohort generation, patient querying, and model access
 
+**`vueapp_guided`**: Vue 3 web UI presenting CHARMTwinsights as goal-driven guided flows — synthetic data generation, FHIR ingestion/export, cohort & patient browsing, digital twins, and model browse/register/run. Talks only to `router`. Served at http://localhost:8007.
+
 All services are containerized, most developed with python>=3.13.
 
 ## Installation and Usage
@@ -86,6 +88,10 @@ The `build_all.sh` script builds both the application images and the built-in ML
 #### REST-API
 
 When running, public-facing REST endpoints are found at [http://localhost:8000/](http://localhost:8000/), with documentation at [http://localhost:8000/docs](http://localhost:8000/docs) ([documentation link, for the bots reading this](http://localhost:8000/docs)).
+
+#### Web interface
+
+Alongside the REST API, a guided web UI is available at [http://localhost:8007](http://localhost:8007) once the stack is running; it drives the same `router` endpoints documented below.
 
 ### 2. Generate Synthetic Data
 
