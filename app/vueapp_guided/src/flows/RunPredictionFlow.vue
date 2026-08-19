@@ -35,7 +35,9 @@
       <p v-else-if="schemaError" class="error">{{ schemaError }}</p>
       <template v-else-if="inputSchema">
         <div class="form-actions">
-          <button class="ghost" type="button" @click="useExample">Use example</button>
+          <button class="load-example-btn" type="button" @click="useExample">
+            ⭳ Load example
+          </button>
         </div>
         <p v-if="exampleError" class="error">{{ exampleError }}</p>
         <div class="jsonforms-host">
@@ -44,6 +46,7 @@
             :schema="inputSchema"
             :renderers="renderers"
             :config="jsonformsConfig"
+            validation-mode="ValidateAndHide"
             @change="onFormChange"
           />
         </div>
@@ -56,17 +59,8 @@
     <!-- Step 2: result -->
     <template #step-2>
       <h2>Prediction</h2>
-      <div class="form-actions">
-        <button
-          class="primary"
-          type="button"
-          :disabled="running || data.formErrors.length > 0"
-          @click="runPrediction"
-        >
-          {{ running ? 'Running…' : 'Run prediction' }}
-        </button>
-      </div>
-      <p v-if="runError" class="error">{{ runError }}</p>
+      <p v-if="running" class="muted">Running the model…</p>
+      <p v-else-if="runError" class="error">{{ runError }}</p>
 
       <table v-if="predictionRows.length" class="results-table">
         <thead>
@@ -180,6 +174,18 @@ watch(
     steps[1].canAdvance = !!inputSchema.value && data.formErrors.length === 0
   },
   { immediate: true },
+)
+
+// Auto-run the prediction the moment the user reaches the Result step (index 2),
+// so there's no separate "Run" button to press. Step-gating guarantees the form
+// is valid before they can get here.
+watch(
+  () => store.currentStep,
+  (step) => {
+    if (step === 2 && !running.value && data.image && data.formErrors.length === 0) {
+      runPrediction()
+    }
+  },
 )
 
 onMounted(async () => {
@@ -296,6 +302,21 @@ function onFinish() {
 .model-card-title { font-weight: 600; margin-bottom: 0.3rem; }
 .model-card-sub { font-size: 0.9rem; margin-top: 0.4rem; }
 .form-actions { display: flex; gap: 0.5rem; margin: 0.5rem 0 1rem; }
+.load-example-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.load-example-btn:hover { background: var(--accent); color: #fff; }
 .results-table { width: 100%; border-collapse: collapse; margin-top: 0.8rem; }
 .results-table th, .results-table td {
   padding: 0.55rem 0.7rem; text-align: left;
