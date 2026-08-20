@@ -116,13 +116,21 @@ services:
   synthea_server:
     depends_on:
       - hapi
+      - fhir-converter
     build: ./synthea_server
+    environment:
+      - CONVERTER_URL=http://fhir-converter:8080
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
+
+
+  fhir-converter:
+    build: ./fhir-converter
+    # no host port needed; internal only
 
 
   model_server:
