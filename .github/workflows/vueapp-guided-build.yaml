@@ -1,0 +1,37 @@
+name: Guided UI Build
+
+on:
+  pull_request:
+    branches: [ci-checks, main-dev, main]
+    paths:
+      - 'app/vueapp_guided/**'
+  push:
+    branches: [ci-checks, main-dev, main]
+    paths:
+      - 'app/vueapp_guided/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app/vueapp_guided
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/vueapp_guided/package-lock.json
+
+      # npm ci (unlike npm install) hard-fails if package-lock.json is out of
+      # sync with package.json, so stale-lockfile regressions are caught here.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 import pandas as pd
 import os
@@ -8,6 +8,7 @@ import shutil
 import json
 import glob
 import requests
+import time
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, Dict, List, Set
@@ -26,7 +27,9 @@ import asyncio
 from datetime import datetime
 import random
 import csv
+import io
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .generate_pdf import extract_patient_info_for_pdf, generate_patient_pdf
 
@@ -405,26 +408,33 @@ def validate_datatype(datatype: str) -> tuple[bool, str]:
 
 
 def validate_fhir_bundle(bundle: dict) -> tuple[bool, str]:
-    """Basic validation of FHIR bundle structure
-    
+    """Basic structural validation of a FHIR Bundle.
+
+    Only checks shape. Does not modify or convert input. HAPI is the
+    authoritative FHIR validator; we just ensure the input is a dict
+    with the right top-level fields before forwarding.
+
     Args:
         bundle: Dictionary representing a FHIR Bundle
-        
+
     Returns:
         Tuple of (is_valid, error_message)
     """
     if not isinstance(bundle, dict):
         return False, "Bundle must be a dictionary"
-    
+
     if bundle.get("resourceType") != "Bundle":
-        return False, f"Invalid resourceType: expected 'Bundle', got '{bundle.get('resourceType')}'"
-    
+        return False, (
+            f"Expected resourceType='Bundle', got "
+            f"resourceType={bundle.get('resourceType')!r}"
+        )
+
     if "entry" not in bundle or not isinstance(bundle.get("entry"), list):
         return False, "Bundle must contain an 'entry' array"
-    
+
     if len(bundle.get("entry", [])) == 0:
         return False, "Bundle must contain at least one entry"
-    
+
     return True, ""
 
 
@@ -752,6 +762,64 @@ def merge_group_members(existing_group, new_patient_ids):
 
 
 
+# Upper bound on how much of a HAPI error body we pass back. Big enough that a
+# realistic OperationOutcome survives intact; only a runaway reply gets cut.
+MAX_HAPI_ERROR_CHARS = 20000
+
+
+def describe_hapi_failure(status_code: int, body: str) -> str:
+    """A short, accurate label for a non-2xx reply from HAPI.
+
+    The old code called every failure a validation error, which is misleading
+    for a 500, a timeout or a missing endpoint. Prefer what the OperationOutcome
+    itself says, then fall back to the status family.
+    """
+    issue_code = None
+    try:
+        outcome = json.loads(body)
+        if outcome.get("resourceType") == "OperationOutcome":
+            issues = outcome.get("issue") or []
+            if issues:
+                issue_code = (issues[0].get("code") or "").lower()
+    except Exception:
+        pass
+
+    by_issue = {
+        "structure": "The FHIR store could not parse the bundle",
+        "invalid": "The FHIR store rejected the bundle as invalid",
+        "required": "The bundle is missing a required element",
+        "value": "The bundle has an invalid value",
+        "invariant": "The bundle violates a FHIR constraint",
+        "code-invalid": "The bundle uses a code the FHIR store does not accept",
+        "not-found": "The FHIR store could not find a referenced resource",
+        "conflict": "The write conflicted with existing data in the FHIR store",
+        "processing": "The FHIR store could not process the bundle",
+        "duplicate": "The bundle duplicates an existing resource",
+        "security": "The FHIR store refused the request for security reasons",
+        "throttled": "The FHIR store is rate limiting requests",
+        "exception": "The FHIR store hit an internal error",
+        "timeout": "The FHIR store timed out handling the bundle",
+    }
+    if issue_code in by_issue:
+        return by_issue[issue_code]
+
+    if status_code in (401, 403):
+        return "The FHIR store refused the request"
+    if status_code == 404:
+        return "The FHIR store endpoint was not found"
+    if status_code == 409:
+        return "The write conflicted with existing data in the FHIR store"
+    if status_code == 413:
+        return "The bundle is too large for the FHIR store"
+    if status_code == 422:
+        return "The FHIR store rejected the bundle as invalid"
+    if 400 <= status_code < 500:
+        return "The FHIR store rejected the bundle"
+    if status_code >= 500:
+        return "The FHIR store hit an internal error"
+    return f"The FHIR store returned an unexpected status ({status_code})"
+
+
 def post_bundle(json_file, hapi_url, tags: dict[str, str] = None, generation_settings: dict = None): # returns (success (bool), message (str), patient_ids (set of str) or None)
     """ Posts a FHIR Bundle or resource to the HAPI FHIR server. Returned patient_ids is a set of patient IDs found in the bundle, useful for cohort management.
     Args:
@@ -963,7 +1031,7 @@ class SyntheaRequest(BaseModel):
     
     num_patients: int = Field(10, gt=0, le=100000, description="Number of patients to generate")
     num_years: int = Field(1, gt=0, le=100, description="Years of medical history per patient")
-    cohort_id: str = Field("default", description="Cohort identifier. Use 'default' for auto-generated name (Cohort-No-X), or specify a custom FHIR-valid ID")
+    cohort_id: str = Field("default", description="Cohort identifier. 'auto', 'default', or blank all request a server-assigned sequential name (Cohort-No-X); anything else is used as-is and must be a valid FHIR resource ID")
     exporter: str = Field("fhir", description="Export format: 'fhir' or 'csv'")
     min_age: int = Field(0, ge=0, le=140, description="Minimum patient age")
     max_age: int = Field(140, ge=0, le=140, description="Maximum patient age")
@@ -983,10 +1051,12 @@ class SyntheaRequest(BaseModel):
     @field_validator('cohort_id')
     @classmethod
     def validate_cohort_id(cls, v: str) -> str:
-        """Validate cohort_id format. 
-        
-        If cohort_id is 'default' or empty, it will be replaced with a unique
-        Cohort-No-X name in create_generation_job after checking existing cohorts.
+        """Validate cohort_id format.
+
+        'default', empty, and the Swagger placeholder 'string' are normalized to
+        the 'auto' sentinel here; create_generation_job then replaces 'auto' with
+        a unique Cohort-No-X name after checking existing cohorts. (Consequence:
+        a cohort can never be literally named 'auto', 'default', or 'string'.)
         """
         # Mark for auto-generation - actual name will be set in create_generation_job
         if v == "default" or v == "" or v == "string":
@@ -1058,10 +1128,13 @@ async def create_generation_job(request: SyntheaRequest):
     if not is_valid:
         raise HTTPException(status_code=400, detail=error_msg)
     
-    # Generate unique cohort name if auto-generation was requested
+    # Generate unique cohort name if auto-generation was requested. The field
+    # validator already folds 'default'/''/'string' into 'auto'; matching the
+    # raw sentinels here too keeps this correct even for callers that build
+    # request_data without going through SyntheaRequest validation.
     hapi_url = os.environ.get('HAPI_URL', 'http://hapi:8080/fhir')
     request_data = request.model_dump()
-    if request_data["cohort_id"] == "auto":
+    if request_data["cohort_id"] in ("auto", "default", "", None):
         request_data["cohort_id"] = generate_unique_cohort_name(hapi_url)
         logger.info(f"Auto-generated cohort name: {request_data['cohort_id']}")
     
@@ -2481,8 +2554,141 @@ async def get_random_patient_pdf():
         return JSONResponse(status_code=500, content={"error": f"Error generating PDF: {str(e)}"})
 
 
+# Every resource type the generation/ingestion pipelines cohort-tag. A cohort
+# delete must sweep all of them. Deleting only Patients leaves tens of
+# thousands of orphaned clinical and provider resources per cohort.
+COHORT_TRACE_TYPES = [
+    "Patient", "Condition", "MedicationRequest", "MedicationStatement",
+    "Procedure", "Observation", "Encounter", "Immunization",
+    "AllergyIntolerance", "DiagnosticReport", "DocumentReference",
+    "CarePlan", "CareTeam", "Claim", "ExplanationOfBenefit",
+    "SupplyDelivery", "Device", "ImagingStudy", "Medication",
+    "Organization", "Practitioner", "PractitionerRole", "Location",
+    "Provenance",
+]
+COHORT_TAG_SYSTEM_URN = "urn:charm:cohort"
+
+
+def _live_cohort_ids(hapi_url):
+    """Cohort ids that still exist, i.e. have a Group resource."""
+    ids = set()
+    next_url = f"{hapi_url.rstrip('/')}/Group?_count=500&_elements=id"
+    while next_url:
+        r = requests.get(next_url, headers={"Accept": "application/fhir+json"}, timeout=30)
+        r.raise_for_status()
+        bundle = r.json()
+        for entry in bundle.get("entry", []) or []:
+            res = entry.get("resource") or {}
+            if res.get("id"):
+                ids.add(res["id"])
+        next_url = next((l.get("url") for l in bundle.get("link", []) or []
+                         if l.get("relation") == "next"), None)
+    return ids
+
+
+def _strip_cohort_tags(hapi_url, resource_type, resource_id, codes):
+    """Remove specific cohort tags from one resource via $meta-delete."""
+    body = {
+        "resourceType": "Parameters",
+        "parameter": [{
+            "name": "meta",
+            "valueMeta": {"tag": [
+                {"system": COHORT_TAG_SYSTEM_URN, "code": c} for c in codes
+            ]},
+        }],
+    }
+    r = requests.post(
+        f"{hapi_url}/{resource_type}/{resource_id}/$meta-delete",
+        json=body, headers={"Accept": "application/fhir+json"}, timeout=30)
+    r.raise_for_status()
+
+
+def sweep_cohort_traces(hapi_url, dead_cohorts, live_cohorts):
+    """Remove every trace of the given dead cohorts.
+
+    Per resource carrying a dead cohort tag: if it is also tagged into a live
+    cohort (possible for re-ingested data), only the dead tags are stripped;
+    otherwise the resource is deleted. Uses the drain pattern, refetching the
+    first search page until it comes back empty, so paging is immune to the
+    deletions shifting offsets.
+
+    Returns {"deleted": {type: n}, "tags_stripped": {type: n}, "failed": n}.
+    """
+    dead_cohorts = set(dead_cohorts)
+    live_cohorts = set(live_cohorts) - dead_cohorts
+    deleted, stripped, failed = {}, {}, 0
+
+    def _fetch_page(url):
+        # A single failed page fetch must not kill a sweep that has already
+        # deleted thousands of resources. Retry, then give up on this lane.
+        for attempt in range(3):
+            try:
+                r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=120)
+                r.raise_for_status()
+                return r.json()
+            except Exception as e:
+                logger.warning(f"Sweep page fetch retry {attempt + 1}/3 for {url.split('?')[0]}: {e}")
+                time.sleep(2 * (attempt + 1))
+        return None
+
+    for rt in COHORT_TRACE_TYPES:
+        for cohort in dead_cohorts:
+            for _page in range(1000):  # drain guard
+                url = (f"{hapi_url}/{rt}?_tag={COHORT_TAG_SYSTEM_URN}|{cohort}"
+                       f"&_count=500&_elements=meta")
+                bundle = _fetch_page(url)
+                if bundle is None:
+                    failed += 1
+                    break  # skip this type+cohort lane, keep sweeping the rest
+                entries = [e.get("resource") for e in (bundle.get("entry") or [])]
+                entries = [res for res in entries if res and res.get("id")]
+                if not entries:
+                    break
+                progressed = False
+                to_delete = []
+                for res in entries:
+                    codes = {t.get("code") for t in (res.get("meta", {}).get("tag") or [])
+                             if t.get("system") == COHORT_TAG_SYSTEM_URN and t.get("code")}
+                    dead_here = codes & dead_cohorts or {cohort}
+                    if codes & live_cohorts:
+                        try:
+                            _strip_cohort_tags(hapi_url, rt, res["id"], sorted(dead_here))
+                            stripped[rt] = stripped.get(rt, 0) + 1
+                            progressed = True
+                        except Exception as e:
+                            failed += 1
+                            logger.error(f"Tag strip failed for {rt}/{res['id']}: {e}")
+                    else:
+                        to_delete.append(res["id"])
+
+                # One transaction bundle deletes the whole page. Individual
+                # DELETEs at this volume saturate HAPI for everyone else.
+                if to_delete:
+                    tx = {"resourceType": "Bundle", "type": "transaction", "entry": [
+                        {"request": {"method": "DELETE", "url": f"{rt}/{rid}"}}
+                        for rid in to_delete
+                    ]}
+                    try:
+                        tr = requests.post(hapi_url, json=tx,
+                                           headers={"Accept": "application/fhir+json",
+                                                    "Content-Type": "application/fhir+json"},
+                                           timeout=300)
+                        tr.raise_for_status()
+                        deleted[rt] = deleted.get(rt, 0) + len(to_delete)
+                        progressed = True
+                    except Exception as e:
+                        failed += len(to_delete)
+                        logger.error(
+                            f"Batch delete of {len(to_delete)} {rt} failed: {str(e)[:200]}")
+                if not progressed:
+                    break  # page of pure failures, so avoid spinning forever
+    return {"deleted": deleted, "tags_stripped": stripped, "failed": failed}
+
+
 @app.delete("/delete-cohort/{cohort_id}", response_class=JSONResponse)
-async def delete_cohort(cohort_id: str):
+def delete_cohort(cohort_id: str):
+    # Sync on purpose: FastAPI threadpools it, so the minutes-long blocking
+    # trace sweep does not freeze the event loop (and every other endpoint).
     """ Deletes a cohort from the HAPI FHIR server, including all patients with the cohort's tag.
     Args:
         cohort_id: The ID of the cohort to delete.
@@ -2498,80 +2704,129 @@ async def delete_cohort(cohort_id: str):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"HAPI FHIR server is not reachable. (It may be starting up.)"})
     
-    # Try to fetch the Group resource
+    # A cohort is deletable if its Group still exists OR tagged resources
+    # remain (a previous partial delete may have removed the Group already).
     group = fetch_group_by_id(hapi_url, cohort_id)
-    if not group:
+    tagged_probe = requests.get(
+        f"{hapi_url}/Patient?_tag={COHORT_TAG_SYSTEM_URN}|{cohort_id}&_summary=count",
+        headers={"Accept": "application/fhir+json"}, timeout=30)
+    tagged_patients = tagged_probe.json().get("total", 0) if tagged_probe.ok else 0
+    if not group and not tagged_patients:
         return JSONResponse(status_code=404, content={"error": f"Cohort with ID '{cohort_id}' not found."})
-    
-    # Get patients from the group's member list
-    group_patient_ids = []
-    if "member" in group:
-        group_patient_ids = [member.get("entity", {}).get("reference", "").replace("Patient/", "") 
-                           for member in group["member"] if "entity" in member]
-        group_patient_ids = set([pid for pid in group_patient_ids if pid])  # Remove empty IDs
-    
-    # Find all patients with this cohort tag
-    tag_patient_ids = []
-    try:
-        # For FHIR search, we need to use the system|code format
-        cohort_tag = f"urn:charm:cohort|{cohort_id}"
-        
-        # Get all patients with this cohort tag
-        url = f"{hapi_url}/Patient?_tag={cohort_tag}&_count=5000"
-        r = requests.get(url)
-        r.raise_for_status()
-        
-        # Extract patient IDs from the search results
-        tagged_patients = r.json()
-        if "entry" in tagged_patients:
-            for entry in tagged_patients["entry"]:
-                if "resource" in entry and entry["resource"].get("resourceType") == "Patient":
-                    patient_id = entry["resource"].get("id")
-                    if patient_id and patient_id not in tag_patient_ids:
-                        tag_patient_ids.append(patient_id)
-    except Exception as e:
-        logger.error(f"Error finding patients with cohort tag: {str(e)}")
-    
-    # Use only the tag-based patient IDs for deletion, as they're more reliable
-    # The Group resource might contain references to patients that no longer exist
-    # or that don't actually have the cohort tag
-    patient_ids = tag_patient_ids
-    
-    # Log the counts for debugging
-    logger.info(f"Cohort {cohort_id}: {len(group_patient_ids)} patients in group, {len(tag_patient_ids)} patients with tag")
-    
-    # Delete each patient
-    deleted_count = 0
-    failed_count = 0
-    try:
-        for patient_id in patient_ids:
-            try:
-                delete_url = f"{hapi_url}/Patient/{patient_id}"
-                delete_r = requests.delete(delete_url)
-                delete_r.raise_for_status()
-                deleted_count += 1
-            except Exception as e:
-                failed_count += 1
-                logger.error(f"Failed to delete patient {patient_id}: {str(e)}")
-    
-    except Exception as e:
-        logger.error(f"Error deleting patients: {str(e)}")
-        # Continue to delete the group even if patient deletion had issues
-    
-    # Delete the Group resource
-    url = f"{hapi_url.rstrip('/')}/Group/{cohort_id}"
-    try:
-        r = requests.delete(url)
-        r.raise_for_status()
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Error deleting cohort group: {str(e)}"})
-    
+
+    # Sweep every trace: patients, their clinical records, and provider
+    # resources tagged into this cohort. Resources shared with a live cohort
+    # only get this cohort's tag stripped.
+    live = _live_cohort_ids(hapi_url) - {cohort_id}
+    stats = sweep_cohort_traces(hapi_url, {cohort_id}, live)
+
+    # Delete the Group resource (if it still exists)
+    if group:
+        try:
+            r = requests.delete(f"{hapi_url.rstrip('/')}/Group/{cohort_id}", timeout=30)
+            r.raise_for_status()
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Error deleting cohort group: {str(e)}"})
+
+    deleted_count = stats["deleted"].get("Patient", 0)
+    total_traces = sum(stats["deleted"].values())
+    total_stripped = sum(stats["tags_stripped"].values())
     return {
-        "message": f"Successfully deleted cohort '{cohort_id}' with {len(patient_ids)} patients ({deleted_count} deleted, {failed_count} failed).",
+        "message": (
+            f"Successfully deleted cohort '{cohort_id}': {deleted_count} patients and "
+            f"{total_traces - deleted_count} linked resources removed"
+            + (f", {total_stripped} shared resources untagged" if total_stripped else "")
+            + (f", {stats['failed']} failures" if stats["failed"] else "") + "."
+        ),
         "cohort_id": cohort_id,
         "patients_deleted": deleted_count,
-        "patients_failed": failed_count,
-        "total_patients": len(patient_ids)
+        "patients_failed": stats["failed"],
+        "total_patients": tagged_patients,
+        "traces": stats,
+    }
+
+
+@app.post("/cleanup-deleted-cohorts", response_class=JSONResponse)
+def cleanup_deleted_cohorts(cohort_id: Optional[List[str]] = Query(None)):
+    """Remove leftovers of cohorts deleted before trace-sweeping existed:
+    scans the store for resources tagged with cohort ids that no longer have
+    a Group, deletes them (or strips the dead tags off resources shared with
+    live cohorts), and finishes with a best-effort $expunge so HAPI reclaims
+    the space of soft-deleted versions.
+
+    Pass ?cohort_id= (repeatable) to target known dead cohorts directly and
+    skip the store-wide discovery scan. Ids that still have a Group are
+    refused rather than swept.
+    """
+    hapi_url = "http://hapi:8080/fhir"
+    try:
+        r = requests.get(hapi_url + "/$meta", timeout=10)
+        r.raise_for_status()
+    except Exception:
+        return JSONResponse(status_code=500, content={"error": "HAPI FHIR server is not reachable."})
+
+    live = _live_cohort_ids(hapi_url)
+
+    if cohort_id:
+        requested = {c for c in cohort_id if c}
+        still_live = sorted(requested & live)
+        if still_live:
+            return JSONResponse(status_code=400, content={
+                "error": f"Refusing to sweep live cohorts: {', '.join(still_live)}. "
+                         f"Delete them via delete-cohort first."})
+        dead = requested
+        return _finish_cleanup(hapi_url, dead, live)
+
+    # Discover dead cohort tags with a slim scan over every tagged type.
+    dead = set()
+    for rt in COHORT_TRACE_TYPES:
+        offset = 0
+        while True:
+            url = (f"{hapi_url}/{rt}?_count=1000&_offset={offset}&_sort=_id"
+                   f"&_elements=meta")
+            r = requests.get(url, headers={"Accept": "application/fhir+json"}, timeout=120)
+            r.raise_for_status()
+            bundle = r.json()
+            for entry in bundle.get("entry", []) or []:
+                for t in ((entry.get("resource") or {}).get("meta", {}).get("tag") or []):
+                    if t.get("system") == COHORT_TAG_SYSTEM_URN and t.get("code"):
+                        if t["code"] not in live:
+                            dead.add(t["code"])
+            if not any(l.get("relation") == "next" for l in bundle.get("link", []) or []):
+                break
+            offset += 1000
+
+    return _finish_cleanup(hapi_url, dead, live)
+
+
+def _finish_cleanup(hapi_url, dead, live):
+    """Sweep the dead cohorts, then best-effort $expunge; build the response."""
+    stats = {"deleted": {}, "tags_stripped": {}, "failed": 0}
+    if dead:
+        stats = sweep_cohort_traces(hapi_url, dead, live)
+
+    # Best-effort expunge of soft-deleted versions (needs expunge enabled).
+    expunge = {"attempted": True, "ok": False}
+    try:
+        body = {"resourceType": "Parameters", "parameter": [
+            {"name": "expungeDeletedResources", "valueBoolean": True},
+            {"name": "expungePreviousVersions", "valueBoolean": True},
+            {"name": "limit", "valueInteger": 100000},
+        ]}
+        er = requests.post(f"{hapi_url}/$expunge", json=body,
+                           headers={"Accept": "application/fhir+json"}, timeout=600)
+        er.raise_for_status()
+        expunge["ok"] = True
+    except Exception as e:
+        expunge["detail"] = str(e)[:300]
+
+    return {
+        "dead_cohorts": sorted(dead),
+        "resources_deleted": sum(stats["deleted"].values()),
+        "tags_stripped": sum(stats["tags_stripped"].values()),
+        "failed": stats["failed"],
+        "by_type": stats["deleted"],
+        "expunge": expunge,
     }
 
 @app.post("/generate-download-synthetic-patients", response_class=JSONResponse)
@@ -2728,7 +2983,7 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
         is_valid_bundle, bundle_error = validate_fhir_bundle(request.bundle)
         if not is_valid_bundle:
             raise HTTPException(status_code=400, detail=bundle_error)
-        
+
         logger.info(f"Processing external FHIR bundle for cohort '{request.cohort_id}' with datatype '{request.datatype}'")
         
         # Prefix patient IDs to prevent conflicts
@@ -2788,15 +3043,24 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
         
         # Check for errors
         if r.status_code not in [200, 201]:
-            error_body = r.text[:1000] if len(r.text) > 1000 else r.text
-            logger.error(f"HAPI FHIR error: Status {r.status_code}, Body: {error_body}")
+            # Keep the whole OperationOutcome. Truncating it used to cut the
+            # JSON mid-string once a bundle produced enough issues, leaving
+            # callers with an unparseable fragment instead of a list of
+            # problems. The cap here is a runaway guard, not a display limit.
+            error_body = r.text[:MAX_HAPI_ERROR_CHARS]
+            truncated = len(r.text) > MAX_HAPI_ERROR_CHARS
+            logger.error(f"HAPI FHIR error: Status {r.status_code}, Body: {error_body[:1000]}")
             return JSONResponse(
                 status_code=r.status_code,
                 content={
                     "success": False,
-                    "error": "HAPI FHIR validation error",
+                    # Label the actual failure. Not every non-2xx from HAPI is
+                    # a validation problem, and calling a 500 or a timeout a
+                    # "validation error" sends people looking in the wrong place.
+                    "error": describe_hapi_failure(r.status_code, r.text),
                     "status_code": r.status_code,
-                    "details": error_body
+                    "details": error_body,
+                    "details_truncated": truncated,
                 }
             )
         
@@ -3075,3 +3339,286 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
+
+
+# ─── sample dataset loader ───────────────────────────────────────────────────
+# First-run convenience: pull the published sample dataset from Hugging Face
+# into an empty HAPI store, so the app has something to explore without
+# waiting on a Synthea generation run.
+
+SAMPLE_REPO = "anas-elghafari/synthetic-patients-FHIR-data"
+SAMPLE_API = f"https://huggingface.co/api/datasets/{SAMPLE_REPO}"
+SAMPLE_FILE_URL = f"https://huggingface.co/datasets/{SAMPLE_REPO}/resolve/main"
+SAMPLE_PROVIDER_FILES = ["bundles/practitionerInformation.json",
+                         "bundles/hospitalInformation.json"]
+_sample_info_cache = {"data": None, "ts": 0.0}
+SAMPLE_INFO_TTL = 3600
+# Parallel download+POST lanes for the sample load. A handful cuts the wall
+# clock a lot (most of each file is network) without swamping HAPI.
+SAMPLE_LOAD_WORKERS = 4
+
+
+def _hf_get(url, timeout=60):
+    r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    return r
+
+
+def _hf_list_bundles():
+    """Every file under bundles/ with its size.
+
+    The tree API pages at 50 entries and advertises the next page in a Link
+    header, so a single call sees only a fraction of a 900-file dataset.
+    """
+    url = f"{SAMPLE_API}/tree/main/bundles?recursive=true&expand=true"
+    files = []
+    while url:
+        r = _hf_get(url)
+        for f in r.json():
+            if f.get("type") == "file" and f.get("path", "").endswith(".json"):
+                lfs = f.get("lfs") or {}
+                files.append({"path": f["path"],
+                              "size": lfs.get("size") or f.get("size") or 0})
+        url = r.links.get("next", {}).get("url")
+    return files
+
+
+def _sample_cohort_names():
+    """Cohort names in the dataset, read from the flat table's cohorts column.
+    The export manifests only record the requested scope, which was the whole
+    store, so they carry no cohort list."""
+    r = _hf_get(f"{SAMPLE_FILE_URL}/flat/patients_flat.csv", timeout=120)
+    rows = csv.reader(io.StringIO(r.text))
+    header = next(rows, [])
+    try:
+        idx = header.index("cohorts")
+    except ValueError:
+        return []
+    names = set()
+    for row in rows:
+        if len(row) > idx and row[idx]:
+            names.update(c for c in row[idx].split(";") if c)
+    return sorted(names)
+
+
+def _sample_dataset_info():
+    """Describe the published sample dataset: cohorts, patients, resources and
+    download size. Cached, since it costs several HTTP calls."""
+    now = time.time()
+    if _sample_info_cache["data"] and now - _sample_info_cache["ts"] < SAMPLE_INFO_TTL:
+        return _sample_info_cache["data"]
+
+    bundle_files = _hf_list_bundles()
+    total_bytes = sum(f["size"] for f in bundle_files)
+    patient_files = [f["path"] for f in bundle_files
+                     if f["path"] not in SAMPLE_PROVIDER_FILES
+                     and not f["path"].endswith("manifest.json")]
+
+    manifest = _hf_get(f"{SAMPLE_FILE_URL}/bundles/manifest.json").json()
+    try:
+        cohorts = _sample_cohort_names()
+    except Exception as e:
+        logger.warning(f"Sample info: could not read cohort names: {e}")
+        cohorts = []
+
+    info = {
+        "repo_id": SAMPLE_REPO,
+        "url": f"https://huggingface.co/datasets/{SAMPLE_REPO}",
+        "patients": manifest.get("patients"),
+        "total_resources": manifest.get("total_resources"),
+        "cohorts": cohorts,
+        "patient_files": len(patient_files),
+        "download_bytes": total_bytes,
+        "download_mb": round(total_bytes / 1048576, 1),
+        "generated_with": "Synthea, via this application",
+        # Measured at roughly 2.5s per patient bundle with SAMPLE_LOAD_WORKERS
+        # lanes: download, convert to a transaction, and PUT into HAPI.
+        "estimated_load_minutes": max(1, round(len(patient_files) * 2.5 / 60)),
+    }
+    _sample_info_cache["data"] = info
+    _sample_info_cache["ts"] = now
+    return info
+
+
+def _load_sample_dataset(job: "JobStatus", hapi_url: str, limit: int = 0):
+    """Download the sample bundles from Hugging Face and put them in HAPI.
+
+    Bundles carry their original urn:charm:* tags, so cohort membership,
+    source and generation settings are restored as they were. Group resources
+    are not in the export, so they are rebuilt from the tags at the end.
+    """
+    job.status = "running"
+    job.started_at = datetime.now()
+    job.current_phase = "Listing dataset files"
+
+    all_files = [f["path"] for f in _hf_list_bundles()
+                 if not f["path"].endswith("manifest.json")]
+    provider = [p for p in SAMPLE_PROVIDER_FILES if p in all_files]
+    patients = sorted(p for p in all_files if p not in provider)
+    if limit and limit > 0:
+        patients = patients[:limit]
+    total = len(provider) + len(patients)
+    job.total_chunks = total
+    logger.info(f"Sample load: {len(patients)} patient bundles, {len(provider)} provider files")
+
+    cohort_members = {}   # cohort_id -> set(patient_id)
+    loaded, failed = 0, 0
+    started = time.time()
+    tally_lock = threading.Lock()
+
+    def push(path):
+        """Download one bundle and PUT it into HAPI as a transaction."""
+        nonlocal loaded, failed
+        for attempt in (1, 2, 3):
+            try:
+                bundle = _hf_get(f"{SAMPLE_FILE_URL}/{path}", timeout=300).json()
+                # Exports are 'collection' bundles; PUT-by-id preserves the
+                # resource ids so references keep resolving.
+                bundle = convert_to_transaction_bundle(bundle)
+                size = len(json.dumps(bundle))
+                r = requests.post(hapi_url, json=bundle,
+                                  headers={"Content-Type": "application/fhir+json"},
+                                  timeout=max(60, min(600, size / 3000)))
+                r.raise_for_status()
+                found = []
+                for entry in bundle.get("entry", []):
+                    res = entry.get("resource", {})
+                    if res.get("resourceType") != "Patient" or not res.get("id"):
+                        continue
+                    for tag in (res.get("meta", {}).get("tag") or []):
+                        if tag.get("system") == COHORT_TAG_SYSTEM_URN and tag.get("code"):
+                            found.append((tag["code"], res["id"]))
+                with tally_lock:
+                    for cohort, pid in found:
+                        cohort_members.setdefault(cohort, set()).add(pid)
+                    loaded += 1
+                return True
+            except Exception as e:
+                logger.warning(f"Sample load: attempt {attempt} failed for {path}: {str(e)[:160]}")
+                time.sleep(3 * attempt)
+        with tally_lock:
+            failed += 1
+        return False
+
+    def mark_progress():
+        with tally_lock:
+            done = loaded + failed
+        job.completed_chunks = done
+        job.progress = round(done / total, 4)
+        if done >= 5:
+            rate = (time.time() - started) / done
+            job.estimated_remaining_seconds = int(rate * (total - done))
+        return done
+
+    # Providers first, and serially, so the shared Organization/Practitioner
+    # records exist before any patient references them.
+    for i, path in enumerate(provider, 1):
+        job.current_phase = f"Loading provider resources ({i}/{len(provider)})"
+        push(path)
+        mark_progress()
+
+    # Patient bundles are independent of each other, so they go in parallel.
+    # Most of the per-file cost is download plus HAPI round trip, and a few
+    # lanes cut the wall clock substantially without overloading HAPI.
+    with ThreadPoolExecutor(max_workers=SAMPLE_LOAD_WORKERS) as pool:
+        futures = [pool.submit(push, p) for p in patients]
+        for _ in as_completed(futures):
+            done = mark_progress()
+            job.current_phase = f"Loading patient records ({max(0, done - len(provider))} of {len(patients)})"
+
+    # Rebuild the cohort Groups that list-all-cohorts reads.
+    job.current_phase = "Rebuilding cohort groups"
+    job.estimated_remaining_seconds = None
+    groups = 0
+    for cohort_id, pids in cohort_members.items():
+        try:
+            upsert_group(hapi_url, cohort_id, pids, None)
+            groups += 1
+        except Exception as e:
+            logger.error(f"Sample load: could not create Group/{cohort_id}: {e}")
+
+    job.status = "completed"
+    job.completed_at = datetime.now()
+    job.progress = 1.0
+    job.current_phase = "done"
+    job.result = {
+        "patients_loaded": loaded - len(provider),
+        "provider_files": len(provider),
+        "files_failed": failed,
+        "cohorts_created": groups,
+        "cohorts": sorted(cohort_members),
+        "source": SAMPLE_REPO,
+    }
+    logger.info(f"Sample load complete: {job.result}")
+
+
+@app.get("/sample-data/info", response_class=JSONResponse)
+def sample_data_info():
+    """What the published sample dataset contains, plus whether this store is
+    empty (which is when offering it makes sense)."""
+    hapi_url = "http://hapi:8080/fhir"
+    store_patients = None
+    try:
+        r = requests.get(f"{hapi_url}/Patient?_summary=count",
+                         headers={"Accept": "application/fhir+json"}, timeout=15)
+        r.raise_for_status()
+        store_patients = r.json().get("total")
+    except Exception as e:
+        logger.warning(f"Sample info: could not count patients: {e}")
+
+    payload = {"store_patients": store_patients, "store_empty": store_patients == 0}
+    try:
+        payload["dataset"] = _sample_dataset_info()
+    except Exception as e:
+        logger.warning(f"Sample info: could not reach Hugging Face: {e}")
+        payload["dataset"] = None
+        payload["dataset_error"] = str(e)[:200]
+    return payload
+
+
+@app.post("/sample-data/load", response_class=JSONResponse)
+def sample_data_load(force: bool = Query(False), limit: int = Query(0, ge=0)):
+    """Load the sample dataset into HAPI. Refuses on a non-empty store unless
+    force=true, so it cannot quietly mix into real work. limit caps how many
+    patient bundles are pulled, which is useful for a quick trial run."""
+    hapi_url = "http://hapi:8080/fhir"
+    try:
+        r = requests.get(f"{hapi_url}/Patient?_summary=count",
+                         headers={"Accept": "application/fhir+json"}, timeout=15)
+        r.raise_for_status()
+        existing = r.json().get("total", 0)
+    except Exception:
+        return JSONResponse(status_code=500, content={"error": "HAPI FHIR server is not reachable."})
+
+    if existing and not force:
+        return JSONResponse(status_code=409, content={
+            "error": f"The store already holds {existing} patients. "
+                     f"Pass force=true to load the sample data anyway."})
+
+    job_id = str(uuid.uuid4())
+    job = JobStatus(job_id, {"action": "load-sample-data", "repo": SAMPLE_REPO,
+                             "limit": limit or None})
+    with jobs_lock:
+        jobs[job_id] = job
+
+    def run():
+        try:
+            _load_sample_dataset(job, hapi_url, limit=limit)
+        except Exception as e:
+            job.status = "failed"
+            job.error = str(e)[:500]
+            job.completed_at = datetime.now()
+            logger.error(f"Sample load failed: {e}", exc_info=True)
+
+    threading.Thread(target=run, name=f"sample-load-{job_id[:8]}", daemon=True).start()
+    return {"job_id": job_id, "status": "queued", "repo": SAMPLE_REPO}
+
+
+@app.get("/sample-data/load/jobs/{job_id}", response_class=JSONResponse)
+def sample_data_load_status(job_id: str):
+    """Progress of a sample-data load job."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return job.to_dict()

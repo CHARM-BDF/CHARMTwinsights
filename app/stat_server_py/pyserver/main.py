@@ -9,10 +9,12 @@ import pandas as pd
 
 # FastAPI imports
 from fastapi import FastAPI, HTTPException, Query, Path
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+from datetime import datetime
+from starlette.background import BackgroundTask
 
 # FHIR imports
 from fhiry import Fhirsearch
@@ -766,6 +768,12 @@ async def get_conditions(
 # Import the FHIR utilities
 from .fhir_utils import FHIRResourceProcessor
 
+# Digital twin finder
+from .twins import TwinFinder, TwinFindRequest, AttributeCountsRequest
+from .export import (build_export_zip, build_flat_export_zip,
+                      build_bundles_export_zip, build_combined_export_zip,
+                      FORMAT_WRITERS)
+
 # Create a FHIR resource processor instance
 fhir_processor = None
 
@@ -773,6 +781,113 @@ fhir_processor = None
 async def startup_event():
     global fhir_processor
     fhir_processor = FHIRResourceProcessor(settings.hapi_url)
+
+
+@app.get("/twins/profile/{patient_id}", response_class=JSONResponse)
+async def get_twin_subject_profile(patient_id: str):
+    """
+    Attribute profile of one patient for the digital twin UI: demographics plus
+    deduplicated {label, codes} lists for conditions, medications, procedures.
+    Complete even for long-history patients ($everything pagination-safe).
+    """
+    try:
+        finder = TwinFinder(settings.hapi_url)
+        return finder.subject_profile(patient_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during profile fetch: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error building twin profile: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Profile fetch failed: {str(e)}")
+
+
+@app.get("/export/fhir")
+def export_fhir_data(cohort_id: Optional[List[str]] = Query(None),
+                     format: Optional[List[str]] = Query(None)):
+    """
+    Export the FHIR store as a zip. Formats (repeat ?format= for several in
+    one archive): ndjson (default) is the FHIR Bulk Data layout, one NDJSON
+    file per resource type; bundles is the Synthea-style layout, one Bundle
+    file per patient plus provider files; flat is one CSV row per patient
+    with 0/1 indicator columns. With several formats each lands under its own
+    directory. Repeat ?cohort_id= to scope the export to specific cohorts;
+    omit it to export everything.
+
+    Sync endpoint on purpose: FastAPI runs it in the threadpool, so the
+    (potentially minutes-long) zip build doesn't block the event loop.
+    """
+    # Accept repeated params and comma-separated values alike.
+    requested = [f.strip() for raw in (format or ["ndjson"]) for f in raw.split(",") if f.strip()]
+    unknown = [f for f in requested if f not in FORMAT_WRITERS]
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown export format(s): {', '.join(unknown)}. "
+                   f"Valid: {', '.join(FORMAT_WRITERS)}")
+    try:
+        path, manifest = build_combined_export_zip(settings.hapi_url, cohort_id, requested)
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during export: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error building export: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    scope = "all" if manifest["scope"] == "all" else "-".join(manifest["cohorts"])[:60]
+    kinds = {"ndjson": "fhir", "bundles": "bundles", "flat": "flat"}
+    kind = "-".join(kinds[f] for f in FORMAT_WRITERS if f in requested)
+    filename = f"charmtwinsights-{kind}-{scope}-{stamp}.zip"
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=filename,
+        headers={"X-Export-Total-Resources": str(manifest.get("total_resources", manifest.get("patients", 0)))},
+        background=BackgroundTask(os.unlink, path),
+    )
+
+
+@app.post("/twins/attribute-counts", response_class=JSONResponse)
+async def twin_attribute_counts(request: AttributeCountsRequest):
+    """
+    How many patients in the store share each of the subject's attributes.
+    Served from a store-wide cache (stale-while-revalidate); returns
+    {"status": "building"} until the first build completes. Callers poll.
+    """
+    try:
+        finder = TwinFinder(settings.hapi_url)
+        return finder.attribute_counts(request)
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during attribute counts: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error computing attribute counts: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/twins/find", response_class=JSONResponse)
+async def find_digital_twins(request: TwinFindRequest):
+    """
+    Similarity-ranked digital twin search.
+
+    Scores patients against the selected attributes of a subject (demographics,
+    conditions, medications, procedures) and returns the top-k matches with
+    per-category subscores plus matched/missing attribute lists. Optionally
+    restricted to one cohort via its urn:charm:cohort tag.
+    """
+    try:
+        finder = TwinFinder(settings.hapi_url)
+        return finder.find(request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except requests.RequestException as e:
+        logger.error(f"HAPI error during twin search: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Error querying the FHIR store: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error during twin search: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Twin search failed: {str(e)}")
 
 @app.get("/list-all-patient-conditions", response_class=JSONResponse)
 async def list_all_patient_conditions():

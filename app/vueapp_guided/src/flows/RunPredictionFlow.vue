@@ -1,0 +1,407 @@
+<template>
+  <Wizard
+    title="Run a prediction"
+    subtitle="Pick a registered model, fill in its inputs, and run it on a single record."
+    accent="#f97316"
+    :steps="steps"
+    finishLabel="Done"
+    @finish="onFinish"
+  >
+    <!-- Step 0: pick a model -->
+    <template #step-0>
+      <h2>Pick a model</h2>
+      <p v-if="loadingModels" class="muted">Loading models…</p>
+      <p v-else-if="modelsError" class="error">{{ modelsError }}</p>
+      <p v-else-if="!models.length" class="muted">No models are registered yet.</p>
+      <div v-else class="model-grid">
+        <button
+          v-for="m in models"
+          :key="m.image"
+          class="model-card"
+          :class="{ selected: data.image === m.image }"
+          @click="selectModel(m.image)"
+        >
+          <div class="model-card-title">{{ m.title || m.image }}</div>
+          <div class="pill">{{ m.image }}</div>
+          <p class="model-card-sub muted">{{ m.short_description }}</p>
+        </button>
+      </div>
+    </template>
+
+    <!-- Step 1: fill inputs (schema-driven) -->
+    <template #step-1>
+      <h2>Inputs for {{ data.image }}</h2>
+      <p v-if="loadingSchema" class="muted">Loading schema…</p>
+      <p v-else-if="schemaError" class="error">{{ schemaError }}</p>
+      <template v-else-if="inputSchema">
+        <div class="form-actions">
+          <button class="load-example-btn" type="button" @click="useExample">
+            ⭳ Load example
+          </button>
+        </div>
+        <p v-if="exampleError" class="error">{{ exampleError }}</p>
+        <div class="jsonforms-host">
+          <JsonForms
+            :data="data.formData"
+            :schema="inputSchema"
+            :renderers="renderers"
+            :config="jsonformsConfig"
+            validation-mode="ValidateAndHide"
+            @change="onFormChange"
+          />
+        </div>
+        <p v-if="data.formErrors.length" class="muted">
+          {{ data.formErrors.length }} field(s) need attention before running.
+        </p>
+
+        <details class="curl-panel">
+          <summary>API request (curl)</summary>
+          <div class="curl-head">
+            <code class="curl-endpoint">POST {{ store.apiBase }}/modeling/predict</code>
+            <button class="ghost curl-copy" type="button" @click="copyCurl">
+              {{ copied ? '✓ Copied' : 'Copy' }}
+            </button>
+          </div>
+          <pre class="curl-code">{{ curlCommand }}</pre>
+        </details>
+      </template>
+    </template>
+
+    <!-- Step 2: result -->
+    <template #step-2>
+      <h2>Prediction</h2>
+      <p v-if="running" class="muted">Running the model…</p>
+      <p v-else-if="runError" class="error">{{ runError }}</p>
+
+      <table v-if="predictionRows.length" class="results-table">
+        <thead>
+          <tr><th v-for="c in resultColumns" :key="c">{{ c }}</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="(row, i) in predictionRows" :key="i">
+            <td v-for="c in resultColumns" :key="c">{{ formatCell(row[c]) }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <details v-if="lastResult">
+        <summary>Raw output</summary>
+        <pre class="schema">{{ JSON.stringify(lastResult.predictions, null, 2) }}</pre>
+      </details>
+      <details v-if="lastResult && lastResult.stderr">
+        <summary>Model logs (stderr)</summary>
+        <pre class="schema">{{ lastResult.stderr }}</pre>
+      </details>
+    </template>
+  </Wizard>
+</template>
+
+<script setup>
+import { reactive, ref, computed, watch, onMounted } from 'vue'
+import { JsonForms } from '@jsonforms/vue'
+import { vanillaRenderers } from '@jsonforms/vue-vanilla'
+import Wizard from '../components/Wizard.vue'
+import { store, goHome } from '../state.js'
+import { listModels, getModel, getModelJsonSchema, predict } from '../api/models.js'
+
+const renderers = Object.freeze([...vanillaRenderers])
+
+// Always show each field's description (vue-vanilla hides it until focus by
+// default), so the schema-derived hints are visible without clicking in.
+const jsonformsConfig = { showUnfocusedDescription: true }
+
+// A compact, human-readable statement of the expected input type, derived from
+// the JSON Schema property. Enums are omitted — the dropdown already lists the
+// allowed values.
+function typeHint(prop) {
+  if (!prop || typeof prop !== 'object' || Array.isArray(prop.enum)) return ''
+  switch (prop.type) {
+    case 'number':
+      return 'Number'
+    case 'integer':
+      return 'Whole number'
+    case 'boolean':
+      return 'Yes / no'
+    case 'string':
+      return 'Text'
+    default:
+      return ''
+  }
+}
+
+// Return a copy of the input JSON Schema with a type hint appended to each
+// field's description, so the always-visible description states what kind of
+// value is expected (e.g. "Body Mass Index · Number").
+function annotateSchema(schema) {
+  if (!schema || !schema.properties) return schema
+  const properties = {}
+  for (const [name, prop] of Object.entries(schema.properties)) {
+    const hint = typeHint(prop)
+    const base = prop.description ? String(prop.description) : ''
+    const description = hint ? (base ? `${base} · ${hint}` : hint) : base
+    properties[name] = description ? { ...prop, description } : { ...prop }
+  }
+  return { ...schema, properties }
+}
+
+const steps = reactive([
+  { label: 'Model', canAdvance: false },
+  { label: 'Inputs', canAdvance: false },
+  { label: 'Result' },
+])
+
+const data = store.flowData.run ?? reactive({
+  image: '',
+  formData: {},
+  formErrors: [],
+})
+store.flowData.run = data
+
+const models = ref([])
+const loadingModels = ref(false)
+const modelsError = ref('')
+
+const inputSchema = ref(null)
+const outputSchema = ref(null)
+const loadingSchema = ref(false)
+const schemaError = ref('')
+const exampleError = ref('')
+
+const running = ref(false)
+const runError = ref('')
+const lastResult = ref(null)
+
+// Live-built curl command for the exact POST /modeling/predict request the form
+// represents — the model server is primarily an API, so this shows integrators
+// how to reproduce the call from any client.
+const copied = ref(false)
+const curlCommand = computed(() => {
+  const url = `${store.apiBase}/modeling/predict`
+  const body = JSON.stringify(
+    { image: data.image || '<model:tag>', input: [data.formData ?? {}] },
+    null,
+    2,
+  )
+  return `curl -X POST '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${body}'`
+})
+async function copyCurl() {
+  try {
+    await navigator.clipboard.writeText(curlCommand.value)
+    copied.value = true
+    setTimeout(() => {
+      copied.value = false
+    }, 1500)
+  } catch {
+    // Clipboard API unavailable (e.g. non-secure context); ignore.
+  }
+}
+
+watch(
+  () => data.image,
+  () => {
+    steps[0].canAdvance = !!data.image
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [inputSchema.value, data.formErrors.length],
+  () => {
+    steps[1].canAdvance = !!inputSchema.value && data.formErrors.length === 0
+  },
+  { immediate: true },
+)
+
+// Auto-run the prediction the moment the user reaches the Result step (index 2),
+// so there's no separate "Run" button to press. Step-gating guarantees the form
+// is valid before they can get here.
+watch(
+  () => store.currentStep,
+  (step) => {
+    if (step === 2 && !running.value && data.image && data.formErrors.length === 0) {
+      runPrediction()
+    }
+  },
+)
+
+onMounted(async () => {
+  loadingModels.value = true
+  modelsError.value = ''
+  try {
+    models.value = await listModels()
+  } catch (e) {
+    modelsError.value = errText(e, 'Failed to load models')
+  } finally {
+    loadingModels.value = false
+  }
+})
+
+async function selectModel(image) {
+  data.image = image
+  data.formData = {}
+  data.formErrors = []
+  lastResult.value = null
+  inputSchema.value = null
+  outputSchema.value = null
+  loadingSchema.value = true
+  schemaError.value = ''
+  exampleError.value = ''
+  try {
+    const js = await getModelJsonSchema(image)
+    inputSchema.value = annotateSchema(js.input_schema)
+    outputSchema.value = js.output_schema
+  } catch (e) {
+    schemaError.value = errText(e, 'Failed to load model schema')
+  } finally {
+    loadingSchema.value = false
+  }
+}
+
+function onFormChange(event) {
+  data.formData = event.data
+  data.formErrors = event.errors ?? []
+}
+
+async function useExample() {
+  exampleError.value = ''
+  try {
+    const detail = await getModel(data.image)
+    const ex = detail.examples && detail.examples[0]
+    if (ex) data.formData = { ...ex }
+  } catch (e) {
+    exampleError.value = errText(e, 'Failed to load example')
+  }
+}
+
+async function runPrediction() {
+  running.value = true
+  runError.value = ''
+  lastResult.value = null
+  try {
+    lastResult.value = await predict(data.image, [data.formData])
+  } catch (e) {
+    runError.value = errText(e, 'Prediction failed')
+  } finally {
+    running.value = false
+  }
+}
+
+const predictionRows = computed(() => {
+  const preds = lastResult.value?.predictions
+  if (!Array.isArray(preds)) return []
+  return preds.map((p) => (p && typeof p === 'object' && !Array.isArray(p) ? p : { value: p }))
+})
+
+const resultColumns = computed(() => {
+  const fromSchema = outputSchema.value?.properties
+    ? Object.keys(outputSchema.value.properties)
+    : []
+  if (fromSchema.length) return fromSchema
+  const first = predictionRows.value[0]
+  return first ? Object.keys(first) : []
+})
+
+function formatCell(v) {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
+
+function errText(e, fallback) {
+  return e?.response?.data?.detail || e?.message || fallback
+}
+
+function onFinish() {
+  goHome()
+}
+</script>
+
+<style scoped>
+.model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+.model-card {
+  text-align: left;
+  padding: 1rem 1.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: inherit;
+  transition: border-color 0.15s ease;
+}
+.model-card:hover { border-color: #f97316; }
+.model-card.selected { border-color: #f97316; background: var(--surface-alt); }
+.model-card-title { font-weight: 600; margin-bottom: 0.3rem; }
+.model-card-sub { font-size: 0.9rem; margin-top: 0.4rem; }
+.form-actions { display: flex; gap: 0.5rem; margin: 0.5rem 0 1rem; }
+.load-example-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.load-example-btn:hover { background: var(--accent); color: #fff; }
+
+.curl-panel {
+  margin-top: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+.curl-panel > summary {
+  cursor: pointer;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  user-select: none;
+}
+.curl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.8rem;
+}
+.curl-endpoint { font-size: 0.8rem; color: var(--text-muted); }
+.curl-copy { font-size: 0.8rem; padding: 0.25rem 0.6rem; }
+.curl-code {
+  margin: 0.4rem 0.8rem 0.8rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+.results-table { width: 100%; border-collapse: collapse; margin-top: 0.8rem; }
+.results-table th, .results-table td {
+  padding: 0.55rem 0.7rem; text-align: left;
+  border-bottom: 1px solid var(--border); font-size: 0.9rem;
+}
+.results-table th {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-muted); font-weight: 500; border-bottom-width: 2px;
+}
+.schema {
+  margin: 0.4rem 0 0; padding: 0.6rem 0.8rem;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 0.8rem; overflow-x: auto;
+}
+.error { color: #dc2626; }
+</style>

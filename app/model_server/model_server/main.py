@@ -19,6 +19,7 @@ from model_server.validation import (
     parse_schema,
     expand_and_normalize_schema,
 )
+from model_server.jsonschema import linkml_to_jsonschema
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -745,4 +746,22 @@ def model_info(image_tag: str):
         "output_schema": schema_to_response_format(m.get("output_schema")),
         "input_schema_expanded": schema_to_response_format(m.get("input_schema_expanded")),
         "output_schema_expanded": schema_to_response_format(m.get("output_schema_expanded")),
+    }
+
+@app.get("/models/{image_tag}/jsonschema")
+def model_jsonschema(image_tag: str):
+    m = models_collection.find_one({"image": image_tag})
+    if not m:
+        raise HTTPException(status_code=404, detail="Model not found")
+    try:
+        # Prefer the ontology-expanded schema so reachable_from enums are materialized.
+        input_source = m.get("input_schema_expanded") or m.get("input_schema")
+        input_schema = linkml_to_jsonschema(input_source)
+        output_schema = linkml_to_jsonschema(m.get("output_schema"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to convert LinkML schema: {e}")
+    return {
+        "image": m["image"],
+        "input_schema": input_schema,
+        "output_schema": output_schema,
     }

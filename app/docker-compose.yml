@@ -13,6 +13,19 @@ services:
     environment:
       - VITE_API_BASE=http://router:8000
 
+  vueapp_guided:
+    build:
+      context: ./vueapp_guided
+      args:
+        # Baked into the static bundle at build time (a runtime `environment:`
+        # entry has no effect on a Vite app served by nginx). Must be a URL the
+        # browser can reach; leave unset to default to http://localhost:8000.
+        - VITE_API_BASE=${VITE_API_BASE:-}
+    ports:
+      - "8007:80"
+    depends_on:
+      - router
+
   streamlit_ui:
     build: ./streamlit_ui
     ports:

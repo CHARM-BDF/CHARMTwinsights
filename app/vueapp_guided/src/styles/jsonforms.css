@@ -1,0 +1,145 @@
+/*
+ * Styling for JSONForms' @jsonforms/vue-vanilla renderers (v3.8.0), themed to
+ * this app's design tokens.
+ *
+ * vue-vanilla's default class names are extremely generic (.control, .label,
+ * .input, .select, .error, .description, ...), so EVERY selector here is
+ * scoped under .jsonforms-host (the wrapper div around <JsonForms> in
+ * RunPredictionFlow.vue) to avoid leaking into the rest of the app.
+ *
+ * Class names verified against node_modules/@jsonforms/vue-vanilla/src:
+ * - styles/defaultStyles.ts (the literal class name strings)
+ * - layouts/LayoutRenderer.vue (vertical-layout / vertical-layout-item, etc.)
+ * - controls/ControlWrapper.vue (control / label / required / asterisk /
+ *   wrapper / error / description)
+ * - controls/StringControlRenderer.vue (input)
+ * - controls/EnumControlRenderer.vue (select, option)
+ * - controls/BooleanControlRenderer.vue (input[type=checkbox], class "input")
+ * - controls/MultiStringControlRenderer.vue (text-area)
+ *
+ * Descriptions are always visible (RunPredictionFlow passes
+ * config.showUnfocusedDescription = true), so .description is styled as a
+ * persistent per-field hint rather than a focus-only tooltip.
+ */
+
+/* Host card: keeps the generated form from sprawling on wide screens */
+.jsonforms-host {
+  max-width: 760px;
+  padding: 1.1rem 1.2rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* Layout: auto-generated VerticalLayout becomes a responsive two-column grid */
+.jsonforms-host .vertical-layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1rem 1.25rem;
+  align-items: start;
+}
+
+.jsonforms-host .vertical-layout-item {
+  display: block;
+  min-width: 0;
+}
+
+/* Textareas and nested groups deserve the full row, not a narrow cell */
+.jsonforms-host .vertical-layout-item:has(.text-area),
+.jsonforms-host .vertical-layout-item:has(.group) {
+  grid-column: 1 / -1;
+}
+
+.jsonforms-host .horizontal-layout {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.jsonforms-host .horizontal-layout-item {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+/* Control (one field) */
+.jsonforms-host .control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.jsonforms-host .control .wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Label */
+.jsonforms-host .control .label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.jsonforms-host .control .asterisk {
+  color: var(--danger);
+  margin-left: 0.15rem;
+}
+
+/* Text / number / select / textarea inputs — full width within their cell.
+   The checkbox (also class "input") is deliberately excluded below. */
+.jsonforms-host .control .input:not([type='checkbox']),
+.jsonforms-host .control .select,
+.jsonforms-host .control .text-area {
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  accent-color: var(--accent);
+}
+
+.jsonforms-host .control .text-area {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.jsonforms-host .control .input:not([type='checkbox']):focus,
+.jsonforms-host .control .select:focus,
+.jsonforms-host .control .text-area:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+/* Boolean: a natural-size checkbox aligned left, not a full-width stretched box */
+.jsonforms-host .control .input[type='checkbox'] {
+  width: 1.15rem;
+  height: 1.15rem;
+  align-self: flex-start;
+  margin: 0.15rem 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.jsonforms-host .control .input:disabled,
+.jsonforms-host .control .select:disabled,
+.jsonforms-host .control .text-area:disabled {
+  background: var(--surface-alt);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+/* Description (always shown) / error — ControlWrapper renders exactly one */
+.jsonforms-host .control .description {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.jsonforms-host .control .error {
+  font-size: 0.78rem;
+  color: var(--danger);
+}

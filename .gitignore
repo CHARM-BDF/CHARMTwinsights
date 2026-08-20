@@ -21,9 +21,13 @@ Thumbs.db
 # Large files and directories (e.g., Synthea-generated data)
 tools/output/
 app/hapi/postgres_data/
+app/hapi/old_postgres_data/
 scripts/mimic_data/
 app/atlas/postgres_data/
 app/atlas/vocabulary_files/
+
+# Local test artifacts
+test_visualization.png
 
 # rstudio stuff
 *.Rproj*
