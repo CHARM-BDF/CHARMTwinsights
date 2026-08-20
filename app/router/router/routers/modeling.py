@@ -145,6 +145,26 @@ async def model_info(image_tag: str = Path(..., example="coxcopdmodel:latest")):
         raise HTTPException(status_code=500, detail="Model server unreachable")
 
 
+@router.get("/models/{image_tag}/jsonschema", response_class=JSONResponse)
+async def model_jsonschema(image_tag: str = Path(..., example="coxcopdmodel:latest")):
+    """
+    Get a model's input/output schemas as JSON Schema (converted from LinkML server-side).
+    """
+    url = f"{settings.model_server_url}/models/{image_tag}/jsonschema"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Model server error: {e.response.text}")
+        detail = e.response.text or f"Error fetching jsonschema for {image_tag}"
+        raise HTTPException(status_code=e.response.status_code, detail=detail)
+    except httpx.RequestError as e:
+        logger.error(f"Error fetching jsonschema for {image_tag}: {e}")
+        raise HTTPException(status_code=500, detail="Model server unreachable")
+
+
 @router.post("/models", response_class=JSONResponse)
 async def register_model(req: RegisterRequest):
     """

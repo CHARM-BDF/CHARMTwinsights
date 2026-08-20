@@ -46,4 +46,7 @@ APP_PORT=8004 "$APP_DIR/model_server/models/test_validation.sh"
 log "Running model registration + metadata + prediction smoke checks"
 "$ROOT_DIR/ci/model_registry_prediction_smoke.sh"
 
+log "Running model JSON Schema smoke checks"
+"$ROOT_DIR/ci/model_jsonschema_smoke.sh"
+
 log "Model validation target passed"
