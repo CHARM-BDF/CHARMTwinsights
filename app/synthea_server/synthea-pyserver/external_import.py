@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import uuid
 from urllib.parse import quote as _urlquote
+import requests
 
 # Resource types that were renamed/removed after DSTU2 (strong DSTU2 signal).
 _DSTU2_ONLY_TYPES = {"MedicationOrder", "DeviceUseRequest", "DiagnosticOrder", "BodySite"}
@@ -130,3 +131,19 @@ def build_isolation_transaction(bundle: dict) -> tuple[dict, list[dict]]:
 
     bundle["type"] = "transaction"
     return bundle, unresolved
+
+
+class ConversionError(Exception):
+    pass
+
+
+def convert_bundle(bundle: dict, source_version: str, converter_url: str, session=None) -> dict:
+    if source_version.upper() == "R4":
+        return bundle
+    sess = session or requests.Session()
+    url = converter_url.rstrip("/") + "/convert"
+    resp = sess.post(url, json={"sourceVersion": "DSTU2", "bundle": bundle},
+                     headers={"Content-Type": "application/json"}, timeout=120)
+    if resp.status_code not in (200, 201):
+        raise ConversionError(f"converter returned {resp.status_code}: {resp.text[:500]}")
+    return resp.json()

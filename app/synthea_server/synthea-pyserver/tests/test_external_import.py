@@ -88,3 +88,40 @@ def test_isolation_synthesizes_identifier_when_absent():
     assert req["method"] == "POST"
     assert req["url"] == "Condition"
     assert "identifier=urn:charm:apple-healthkit-src-id%7C7" in req["ifNoneExist"]
+
+
+class _FakeResp:
+    def __init__(self, status, payload): self.status_code = status; self._p = payload
+    def json(self): return self._p
+    @property
+    def text(self): import json; return json.dumps(self._p)
+
+
+class _FakeSession:
+    def __init__(self, resp): self.resp = resp; self.calls = []
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.calls.append((url, json)); return self.resp
+
+
+def test_r4_is_passthrough_no_network():
+    sess = _FakeSession(_FakeResp(500, {}))  # would error if called
+    b = {"resourceType": "Bundle", "entry": []}
+    assert ei.convert_bundle(b, "R4", "http://c:8080", session=sess) is b
+    assert sess.calls == []
+
+
+def test_dstu2_calls_converter():
+    r4 = {"resourceType": "Bundle", "type": "collection", "entry": []}
+    sess = _FakeSession(_FakeResp(200, r4))
+    b = {"resourceType": "Bundle", "entry": [{"resource": {"resourceType": "MedicationOrder"}}]}
+    out = ei.convert_bundle(b, "DSTU2", "http://c:8080", session=sess)
+    assert out == r4
+    assert sess.calls[0][0] == "http://c:8080/convert"
+    assert sess.calls[0][1]["sourceVersion"] == "DSTU2"
+
+
+def test_converter_error_raises():
+    sess = _FakeSession(_FakeResp(400, {"resourceType": "OperationOutcome"}))
+    import pytest
+    with pytest.raises(ei.ConversionError):
+        ei.convert_bundle({"resourceType": "Bundle"}, "DSTU2", "http://c:8080", session=sess)
