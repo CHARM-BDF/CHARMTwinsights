@@ -980,6 +980,16 @@ git commit -m "feat(ingest): route external FHIR through DSTU2 conversion + isol
 **Interfaces:**
 - Consumes: the running compose stack (`router`, `synthea_server`, `fhir-converter`, `hapi`).
 
+- [ ] **Step 0: Update the EXISTING R4 assertions the migration invalidated (do this first)**
+
+Task 7 replaced the old `ext-` prefix + PUT-by-id isolation with server-assigned IDs + identifier-based `ifNoneExist`. The existing R4 test in `ci/external_fhir_ingestion_validation.sh` still assumes the old behavior and will now fail. Update it to match the new behavior — this is expected, since the R4 external path was deliberately migrated (no backward-compat constraint):
+
+- Lines ~172-176: it asserts `patient_ids[0]` starts with `ext-`. NEW behavior: the response's `patient_ids` now carry **server-assigned ids** (e.g. `"42"`), not `ext-` prefixed ones. Drop the `ext-*` expectation; just require a non-empty id string. Rename the `prefixed_patient_id` variable to something accurate like `patient_id` (it now holds the server id).
+- The downstream queries (`Patient/${id}`, `Group/${cohort_id}` membership `Patient/${id}`, `Observation?subject=Patient/${id}`, idempotency `Patient?_id=${id}&_summary=count == 1`, obs count after re-ingest) all still hold with the server id, because `upsert_group` now receives the response-derived server ids and observations resolve to the server-assigned Patient id via the transaction. Verify each still passes; adjust only what the id-shape change requires.
+- Idempotency now works via `ifNoneExist` on the resource identifier (the R4 test patient/observations get a synthesized `urn:charm:apple-healthkit-src-id` identifier from their bundle ids when they carry no identifier of their own), so re-ingest must still yield exactly one patient. Confirm empirically.
+
+**Method:** bring the stack up (Step 2), run the script once to see the old assertions fail, fix each to the new behavior, then confirm green before adding the DSTU2 case. Do NOT weaken an assertion to pass — update it to assert the new correct behavior.
+
 - [ ] **Step 1: Relocate the sample fixtures**
 
 ```bash
