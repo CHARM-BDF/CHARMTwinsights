@@ -325,6 +325,10 @@ if [ "$stub_count_before" != "$stub_count_after" ]; then
   error "DSTU2 idempotency check failed: stub Patient count changed from ${stub_count_before} to ${stub_count_after}"
   exit 1
 fi
+if ! [[ "$stub_count_after" =~ ^[0-9]+$ ]] || [ "$stub_count_after" -ne 1 ]; then
+  error "Expected exactly one stub Patient after DSTU2 re-ingest, got ${stub_count_after}"
+  exit 1
+fi
 
 log "DSTU2 import OK"
 
