@@ -169,19 +169,19 @@ if ! echo "$REQUEST_BODY" | jq -e --arg cohort_id "$cohort_id" '
   exit 1
 fi
 
-prefixed_patient_id="$(echo "$REQUEST_BODY" | jq -r '.patient_ids[0] // empty')"
-if [ -z "$prefixed_patient_id" ] || [[ "$prefixed_patient_id" != ext-* ]]; then
-  error "Expected prefixed patient id starting with ext-, got '${prefixed_patient_id}'"
+server_patient_id="$(echo "$REQUEST_BODY" | jq -r '.patient_ids[0] // empty')"
+if [ -z "$server_patient_id" ]; then
+  error "Expected a non-empty server-assigned patient id, got '${server_patient_id}'"
   exit 1
 fi
 
-log "Validating patient and cohort resources in HAPI for ${prefixed_patient_id}"
-patient_json="$(curl -fsS "${HAPI_BASE_URL}/Patient/${prefixed_patient_id}")"
+log "Validating patient and cohort resources in HAPI for ${server_patient_id}"
+patient_json="$(curl -fsS "${HAPI_BASE_URL}/Patient/${server_patient_id}")"
 if ! echo "$patient_json" | jq -e '
   .resourceType == "Patient"
   and (.id | type == "string" and length > 0)
 ' >/dev/null; then
-  error "HAPI patient validation failed for ${prefixed_patient_id}: ${patient_json}"
+  error "HAPI patient validation failed for ${server_patient_id}: ${patient_json}"
   exit 1
 fi
 
@@ -189,26 +189,26 @@ if ! echo "$patient_json" | jq -e --arg cohort_id "$cohort_id" '
   any(.meta.tag[]?; .system == "urn:charm:source" and .code == "external")
   and any(.meta.tag[]?; .system == "urn:charm:cohort" and .code == $cohort_id)
 ' >/dev/null; then
-  error "Expected CHARM tags not found on patient ${prefixed_patient_id}"
+  error "Expected CHARM tags not found on patient ${server_patient_id}"
   exit 1
 fi
 
 group_json="$(curl -fsS "${HAPI_BASE_URL}/Group/${cohort_id}")"
-if ! echo "$group_json" | jq -e --arg patient_ref "Patient/${prefixed_patient_id}" '
+if ! echo "$group_json" | jq -e --arg patient_ref "Patient/${server_patient_id}" '
   .resourceType == "Group"
   and any(.member[]?; .entity.reference == $patient_ref)
 ' >/dev/null; then
-  error "Group/${cohort_id} missing expected patient member ${prefixed_patient_id}"
+  error "Group/${cohort_id} missing expected patient member ${server_patient_id}"
   exit 1
 fi
 
-obs_count_before="$(curl -fsS "${HAPI_BASE_URL}/Observation?subject=Patient/${prefixed_patient_id}&_summary=count" | jq -r '.total // 0')"
+obs_count_before="$(curl -fsS "${HAPI_BASE_URL}/Observation?subject=Patient/${server_patient_id}&_summary=count" | jq -r '.total // 0')"
 if ! [[ "$obs_count_before" =~ ^[0-9]+$ ]] || [ "$obs_count_before" -lt 1 ]; then
-  error "Invalid initial observation count for ${prefixed_patient_id}: ${obs_count_before}"
+  error "Invalid initial observation count for ${server_patient_id}: ${obs_count_before}"
   exit 1
 fi
 
-log "Re-ingesting updated bundle for ${prefixed_patient_id}"
+log "Re-ingesting updated bundle for ${server_patient_id}"
 request_json "POST" "${SYNTHEA_BASE_URL}/ingest-external-fhir" "$(jq -nc \
   --argjson bundle "$bundle_two" \
   --arg cohort_id "$cohort_id" \
@@ -220,13 +220,13 @@ if [ "$REQUEST_STATUS" != "200" ]; then
   exit 1
 fi
 
-patient_duplicate_count="$(curl -fsS "${HAPI_BASE_URL}/Patient?_id=${prefixed_patient_id}&_summary=count" | jq -r '.total // 0')"
+patient_duplicate_count="$(curl -fsS "${HAPI_BASE_URL}/Patient?_id=${server_patient_id}&_summary=count" | jq -r '.total // 0')"
 if ! [[ "$patient_duplicate_count" =~ ^[0-9]+$ ]] || [ "$patient_duplicate_count" -ne 1 ]; then
   error "Expected exactly one patient after re-ingest, got ${patient_duplicate_count}"
   exit 1
 fi
 
-obs_count_after="$(curl -fsS "${HAPI_BASE_URL}/Observation?subject=Patient/${prefixed_patient_id}&_summary=count" | jq -r '.total // 0')"
+obs_count_after="$(curl -fsS "${HAPI_BASE_URL}/Observation?subject=Patient/${server_patient_id}&_summary=count" | jq -r '.total // 0')"
 if ! [[ "$obs_count_after" =~ ^[0-9]+$ ]] || [ "$obs_count_after" -lt 2 ]; then
   error "Expected at least two observations after re-ingest, got ${obs_count_after}"
   exit 1
@@ -265,5 +265,67 @@ if [ "$REQUEST_STATUS" -lt 400 ]; then
   error "Expected empty bundle request to fail, got HTTP ${REQUEST_STATUS}"
   exit 1
 fi
+
+log "Ingesting DSTU2 Apple HealthKit sample (Sample C)"
+dstu2_fixture="$ROOT_DIR/app/synthea_server/test_fixtures/apple_healthkit_dstu2_c.json"
+dstu2_cohort_id="ci-apple-dstu2"
+# Sample C references Patient/19035 (Salinas, Candace) without a contained
+# Patient resource, so the import path must synthesize a stub Patient for it.
+dstu2_src_patient_id="19035"
+
+dstu2_bundle="$(jq -c '.' "$dstu2_fixture")"
+dstu2_request="$(jq -nc \
+  --argjson bundle "$dstu2_bundle" \
+  --arg cohort_id "$dstu2_cohort_id" \
+  '{bundle: $bundle, cohort_id: $cohort_id, datatype: "external", source_fhir_version: "DSTU2"}'
+)"
+
+request_json "POST" "${SYNTHEA_BASE_URL}/ingest-external-fhir" "$dstu2_request"
+
+if [ "$REQUEST_STATUS" != "200" ]; then
+  error "DSTU2 ingestion failed with HTTP ${REQUEST_STATUS}: ${REQUEST_BODY}"
+  exit 1
+fi
+
+if ! echo "$REQUEST_BODY" | jq -e --arg cohort_id "$dstu2_cohort_id" '
+  .success == true
+  and .cohort_id == $cohort_id
+  and .datatype == "external"
+  and (.patient_count | tonumber) >= 1
+  and (.patient_ids | type == "array" and length >= 1)
+  and (.unresolved_references | type == "array")
+' >/dev/null; then
+  error "DSTU2 ingestion response validation failed: ${REQUEST_BODY}"
+  exit 1
+fi
+
+log "Confirming stub Patient carries the source-id identifier for ${dstu2_src_patient_id}"
+stub_count_before="$(curl -fsS "${HAPI_BASE_URL}/Patient?identifier=urn:charm:apple-healthkit-src-id%7C${dstu2_src_patient_id}&_summary=count" | jq -r '.total // 0')"
+if ! [[ "$stub_count_before" =~ ^[0-9]+$ ]] || [ "$stub_count_before" -lt 1 ]; then
+  error "Expected a stub Patient with identifier urn:charm:apple-healthkit-src-id|${dstu2_src_patient_id}, got count ${stub_count_before}"
+  exit 1
+fi
+
+log "Confirming DSTU2 MedicationOrder converted to R4 MedicationRequest"
+medrequest_count="$(curl -fsS "${HAPI_BASE_URL}/MedicationRequest?_summary=count" | jq -r '.total // 0')"
+if ! [[ "$medrequest_count" =~ ^[0-9]+$ ]] || [ "$medrequest_count" -lt 1 ]; then
+  error "Expected at least one MedicationRequest after DSTU2 conversion, got ${medrequest_count}"
+  exit 1
+fi
+
+log "Re-ingesting identical DSTU2 bundle to confirm idempotency"
+request_json "POST" "${SYNTHEA_BASE_URL}/ingest-external-fhir" "$dstu2_request"
+if [ "$REQUEST_STATUS" != "200" ]; then
+  error "DSTU2 re-ingestion failed with HTTP ${REQUEST_STATUS}: ${REQUEST_BODY}"
+  exit 1
+fi
+
+stub_count_after="$(curl -fsS "${HAPI_BASE_URL}/Patient?identifier=urn:charm:apple-healthkit-src-id%7C${dstu2_src_patient_id}&_summary=count" | jq -r '.total // 0')"
+if [ "$stub_count_before" != "$stub_count_after" ]; then
+  error "DSTU2 idempotency check failed: stub Patient count changed from ${stub_count_before} to ${stub_count_after}"
+  exit 1
+fi
+
+log "DSTU2 import OK"
 
 log "External FHIR ingestion validation passed for cohort ${cohort_id}"
