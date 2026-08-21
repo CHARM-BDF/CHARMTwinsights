@@ -890,6 +890,56 @@ Then, where the endpoint builds its JSON response, include the report. Find the 
 
 Note: keep `prefix_patient_ids` and `convert_to_transaction_bundle` defined — they are still referenced by other flows (grep confirms line ~3477). Only the external endpoint stops calling them.
 
+- [ ] **Step 5b: Derive cohort patient IDs from the transaction RESPONSE, not the request**
+
+**Why (plan defect fix):** the old endpoint built `patient_ids` from `resource.get("id")` on Patient resources in the bundle *before* POSTing, then fed them to `upsert_group`. But `build_isolation_transaction` now **drops** every resource `id` (HAPI assigns them via conditional-create), so reading ids from the request bundle yields nothing and cohorts never populate. The server-assigned ids only exist in the transaction response.
+
+Replace the old pre-POST patient-id extraction block:
+
+```python
+        # Extract patient IDs before posting (for cohort management)
+        patient_ids = set()
+        for entry in transaction_bundle.get("entry", []):
+            resource = entry.get("resource", {})
+            if resource.get("resourceType") == "Patient":
+                patient_id = resource.get("id")
+                if patient_id:
+                    patient_ids.add(patient_id)
+```
+
+with: (a) BEFORE the POST, record which request-entry indices are Patients —
+
+```python
+        # The transaction drops resource ids (server assigns them via
+        # conditional-create), so cohort patient ids must come from the
+        # response, not the request. Record which entries are Patients by index.
+        patient_entry_indices = [
+            i for i, entry in enumerate(transaction_bundle.get("entry", []))
+            if entry.get("resource", {}).get("resourceType") == "Patient"
+        ]
+```
+
+and (b) AFTER the success check (`r.status_code` in 200/201), parse the response bundle for the server-assigned ids —
+
+```python
+        # Pull server-assigned Patient ids from the transaction response.
+        # Each response entry lines up with its request entry by index; a
+        # created/matched resource reports response.location = "Patient/<id>/_history/..".
+        patient_ids = set()
+        try:
+            resp_entries = r.json().get("entry", [])
+            for i in patient_entry_indices:
+                if i < len(resp_entries):
+                    location = resp_entries[i].get("response", {}).get("location", "")
+                    parts = location.split("/")
+                    if len(parts) >= 2 and parts[0] == "Patient" and parts[1]:
+                        patient_ids.add(parts[1])
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning(f"Could not parse patient ids from transaction response: {e}")
+```
+
+This runs where the current `patient_ids`/`upsert_group` block sits (the existing `if patient_ids: upsert_group(...)` and the response's `patient_count`/`patient_ids` keys stay as-is, now fed by the response-derived set). It is correct for idempotent re-import too: an `ifNoneExist` match returns the existing resource's location, so the same server id comes back.
+
 - [ ] **Step 6: Add `source_fhir_version` to the router and forward it**
 
 In `app/router/router/routers/ingestion.py`, add to `ExternalFHIRIngestRequest`:
