@@ -127,6 +127,11 @@ def build_isolation_transaction(bundle: dict) -> tuple[dict, list[dict]]:
         if ident is not None:
             token = f"{ident[0]}|{ident[1]}"
             req["ifNoneExist"] = f"identifier={_urlquote(token, safe=':')}"
+        # else: no identifier and no id, so nothing to key ifNoneExist on -
+        # this is a plain POST with no dedup, and re-importing the same bundle
+        # will duplicate this resource. Acceptable because every resource in
+        # target bundles carries at least a bare id, which is synthesized into
+        # an identifier above.
         e["request"] = req
 
     bundle["type"] = "transaction"

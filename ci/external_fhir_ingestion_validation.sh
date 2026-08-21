@@ -299,6 +299,18 @@ if ! echo "$REQUEST_BODY" | jq -e --arg cohort_id "$dstu2_cohort_id" '
   exit 1
 fi
 
+# Sample C also has an asserter/prescriber Practitioner/23 and Practitioner/24763
+# reference with no contained Practitioner resource, so those must surface as
+# unresolved references (unlike Patient/19035, which gets a synthesized stub).
+if ! echo "$REQUEST_BODY" | jq -e '
+  (.unresolved_references | length >= 2)
+  and (.unresolved_references | any(.reference == "Practitioner/23"))
+  and (.unresolved_references | any(.reference == "Practitioner/24763"))
+' >/dev/null; then
+  error "DSTU2 ingestion did not report expected dangling Practitioner references: ${REQUEST_BODY}"
+  exit 1
+fi
+
 log "Confirming stub Patient carries the source-id identifier for ${dstu2_src_patient_id}"
 stub_count_before="$(curl -fsS "${HAPI_BASE_URL}/Patient?identifier=urn:charm:apple-healthkit-src-id%7C${dstu2_src_patient_id}&_summary=count" | jq -r '.total // 0')"
 if ! [[ "$stub_count_before" =~ ^[0-9]+$ ]] || [ "$stub_count_before" -lt 1 ]; then

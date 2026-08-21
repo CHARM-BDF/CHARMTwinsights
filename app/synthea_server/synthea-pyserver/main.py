@@ -2962,8 +2962,13 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
     """
     Ingest FHIR bundle from external source (e.g., FHIR-HOSE mobile app).
     
-    This endpoint accepts a FHIR Bundle, prefixes patient IDs to prevent conflicts,
-    applies appropriate tags, and stores the data in HAPI FHIR for cohort management.
+    This endpoint accepts a FHIR Bundle, converts it from DSTU2 to R4 if needed,
+    synthesizes stub Patient resources for any Patient references not present in the
+    bundle, isolates resources from existing data by letting the server assign new
+    ids (moving any incoming id into an identifier used for `ifNoneExist`
+    conditional-create dedup), applies appropriate tags, stores the data in HAPI
+    FHIR for cohort management, and reports any references that could not be
+    resolved.
     
     Args:
         request: ExternalFHIRRequest containing bundle, cohort_id, and datatype
@@ -2990,9 +2995,25 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
         logger.info(f"Processing external FHIR bundle for cohort '{request.cohort_id}' with datatype '{request.datatype}'")
         
         # Detect version, convert if DSTU2, synthesize stub patients, isolate ids.
-        transaction_bundle, unresolved_refs = external_import.assemble_external_import(
-            request.bundle, request.source_fhir_version, CONVERTER_URL,
-        )
+        # This step calls the FHIR converter sidecar; keep its failures in their
+        # own try/except so they aren't misattributed to HAPI by the outer
+        # requests.Timeout/RequestException handlers below.
+        try:
+            transaction_bundle, unresolved_refs = external_import.assemble_external_import(
+                request.bundle, request.source_fhir_version, CONVERTER_URL,
+            )
+        except external_import.ConversionError as e:
+            logger.error(f"FHIR conversion service error: {str(e)}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"FHIR conversion service error: {str(e)}"
+            )
+        except (requests.Timeout, requests.RequestException) as e:
+            logger.error(f"Error communicating with FHIR conversion service: {str(e)}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"FHIR conversion service error: {str(e)}"
+            )
         if unresolved_refs:
             logger.warning(f"{len(unresolved_refs)} unresolved reference(s) in import")
 
