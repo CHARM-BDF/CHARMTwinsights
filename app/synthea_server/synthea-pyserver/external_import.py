@@ -147,3 +147,11 @@ def convert_bundle(bundle: dict, source_version: str, converter_url: str, sessio
     if resp.status_code not in (200, 201):
         raise ConversionError(f"converter returned {resp.status_code}: {resp.text[:500]}")
     return resp.json()
+
+
+def assemble_external_import(bundle: dict, source_fhir_version: str | None,
+                             converter_url: str, session=None) -> tuple[dict, list[dict]]:
+    version = detect_fhir_version(bundle, hint=source_fhir_version)
+    r4 = convert_bundle(bundle, version, converter_url, session=session)
+    stubbed = synthesize_stub_patients(r4)
+    return build_isolation_transaction(stubbed)

@@ -124,12 +124,13 @@ class ExternalFHIRIngestRequest(BaseModel):
         }
     )
     datatype: str = Field(
-        "external", 
+        "external",
         description="Data type classification - must be 'external' or 'synthetic'",
         json_schema_extra={
             "example": "external"
         }
     )
+    source_fhir_version: str = Field("R4", description="Source FHIR version: 'R4' or 'DSTU2'")
 
 
 @router.post("/fhir", response_class=JSONResponse)
@@ -197,7 +198,8 @@ async def ingest_external_fhir(request: ExternalFHIRIngestRequest):
     request_data = {
         "bundle": request.bundle,
         "cohort_id": request.cohort_id,
-        "datatype": request.datatype
+        "datatype": request.datatype,
+        "source_fhir_version": request.source_fhir_version
     }
     
     try:

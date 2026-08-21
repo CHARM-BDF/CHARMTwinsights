@@ -90,6 +90,17 @@ def test_isolation_synthesizes_identifier_when_absent():
     assert "identifier=urn:charm:apple-healthkit-src-id%7C7" in req["ifNoneExist"]
 
 
+def test_assemble_external_import_end_to_end_r4():
+    bundle = {"resourceType": "Bundle", "type": "collection", "entry": [
+        {"resource": {"resourceType": "Observation", "id": "1",
+                      "subject": {"reference": "Patient/100"}}}]}
+    txn, unresolved = ei.assemble_external_import(bundle, "R4", "http://c:8080")
+    assert txn["type"] == "transaction"
+    types = {e["resource"]["resourceType"] for e in txn["entry"]}
+    assert "Patient" in types            # stub synthesized
+    assert unresolved == []              # Patient/100 now resolves in-bundle
+
+
 class _FakeResp:
     def __init__(self, status, payload): self.status_code = status; self._p = payload
     def json(self): return self._p

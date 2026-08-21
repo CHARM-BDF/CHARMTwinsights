@@ -20,6 +20,8 @@ from timeseries import (
     generate_synthetic_timeseries,
     get_model_info as get_timeseries_model_info,
 )
+import external_import
+CONVERTER_URL = os.environ.get("CONVERTER_URL", "http://fhir-converter:8080")
 import re
 import logging
 import uuid
@@ -2937,7 +2939,8 @@ class ExternalFHIRRequest(BaseModel):
     bundle: dict = Field(..., description="FHIR Bundle containing patient data")
     cohort_id: str = Field("external", description="Cohort identifier for organizing data")
     datatype: str = Field("external", description="Data type classification (external or synthetic)")
-    
+    source_fhir_version: str = Field("R4", description="Source FHIR version: 'R4' (default) or 'DSTU2'")
+
     @field_validator('cohort_id')
     @classmethod
     def validate_cohort_id(cls, v: str) -> str:
@@ -2986,12 +2989,13 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
 
         logger.info(f"Processing external FHIR bundle for cohort '{request.cohort_id}' with datatype '{request.datatype}'")
         
-        # Prefix patient IDs to prevent conflicts
-        prefixed_bundle = prefix_patient_ids(request.bundle, prefix="ext-")
-        
-        # Convert to transaction bundle for atomic updates
-        transaction_bundle = convert_to_transaction_bundle(prefixed_bundle)
-        
+        # Detect version, convert if DSTU2, synthesize stub patients, isolate ids.
+        transaction_bundle, unresolved_refs = external_import.assemble_external_import(
+            request.bundle, request.source_fhir_version, CONVERTER_URL,
+        )
+        if unresolved_refs:
+            logger.warning(f"{len(unresolved_refs)} unresolved reference(s) in import")
+
         # Apply tags
         tagset = {
             "urn:charm:source": "external",
@@ -3001,17 +3005,14 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
         }
         apply_tags(transaction_bundle, tagset)
         
-        # Extract patient IDs before posting (for cohort management)
-        patient_ids = set()
-        for entry in transaction_bundle.get("entry", []):
-            resource = entry.get("resource", {})
-            if resource.get("resourceType") == "Patient":
-                patient_id = resource.get("id")
-                if patient_id:
-                    patient_ids.add(patient_id)
-        
-        logger.info(f"Found {len(patient_ids)} patient(s) in bundle: {list(patient_ids)[:5]}{'...' if len(patient_ids) > 5 else ''}")
-        
+        # The transaction drops resource ids (server assigns them via
+        # conditional-create), so cohort patient ids must come from the
+        # response, not the request. Record which entries are Patients by index.
+        patient_entry_indices = [
+            i for i, entry in enumerate(transaction_bundle.get("entry", []))
+            if entry.get("resource", {}).get("resourceType") == "Patient"
+        ]
+
         # Post bundle to HAPI FHIR
         bundle_size = len(json.dumps(transaction_bundle))
         timeout = max(30, min(300, bundle_size / 5000))
@@ -3065,7 +3066,24 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
             )
         
         logger.info(f"Successfully posted bundle to HAPI FHIR")
-        
+
+        # Pull server-assigned Patient ids from the transaction response.
+        # Each response entry lines up with its request entry by index; a
+        # created/matched resource reports response.location = "Patient/<id>/_history/..".
+        patient_ids = set()
+        try:
+            resp_entries = r.json().get("entry", [])
+            for i in patient_entry_indices:
+                if i < len(resp_entries):
+                    location = resp_entries[i].get("response", {}).get("location", "")
+                    parts = location.split("/")
+                    if len(parts) >= 2 and parts[0] == "Patient" and parts[1]:
+                        patient_ids.add(parts[1])
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning(f"Could not parse patient ids from transaction response: {e}")
+
+        logger.info(f"Found {len(patient_ids)} patient(s) in bundle: {list(patient_ids)[:5]}{'...' if len(patient_ids) > 5 else ''}")
+
         # Update cohort Group resource
         if patient_ids:
             try:
@@ -3082,7 +3100,8 @@ async def ingest_external_fhir(request: ExternalFHIRRequest):
             "datatype": request.datatype,
             "patient_count": len(patient_ids),
             "patient_ids": list(patient_ids),
-            "tags_applied": tagset
+            "tags_applied": tagset,
+            "unresolved_references": unresolved_refs
         }
         
     except HTTPException:
