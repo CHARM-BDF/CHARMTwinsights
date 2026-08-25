@@ -126,8 +126,8 @@
       </div>
 
       <p class="muted" style="margin-top: 0.8rem">
-        All patient IDs will be prefixed with <code>ext-</code> automatically to prevent
-        collisions with synthetic data.
+        Imported records are isolated with server-assigned IDs, so they can't collide
+        with existing synthetic or previously imported data.
       </p>
     </template>
 

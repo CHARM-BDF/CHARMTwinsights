@@ -1,0 +1,190 @@
+{
+  "entry" : [
+    {
+      "resource" : {
+        "asserter" : {
+          "display" : "Troy Monken",
+          "reference" : "Practitioner\/23"
+        },
+        "category" : {
+          "coding" : [
+            {
+              "code" : "diagnosis",
+              "system" : "http:\/\/hl7.org\/fhir\/condition-category"
+            }
+          ]
+        },
+        "clinicalStatus" : "active",
+        "code" : {
+          "coding" : [
+            {
+              "code" : "40930008",
+              "system" : "http:\/\/snomed.info\/sct"
+            }
+          ],
+          "text" : "Hypothyroidism"
+        },
+        "dateRecorded" : "2014-10-12",
+        "id" : "42467",
+        "patient" : {
+          "reference" : "Patient\/19035"
+        },
+        "resourceType" : "Condition",
+        "verificationStatus" : "confirmed"
+      }
+    },
+    {
+      "resource" : {
+        "dateWritten" : "2015-01-03T00:00:00-08:00",
+        "dosageInstruction" : [
+          {
+            "text" : "Once Daily",
+            "timing" : {
+              "repeat" : {
+                "boundsPeriod" : {
+                  "start" : "2015-01-03"
+                }
+              }
+            }
+          }
+        ],
+        "id" : "23535",
+        "medicationCodeableConcept" : {
+          "coding" : [
+            {
+              "code" : "903736",
+              "system" : "http:\/\/www.nlm.nih.gov\/research\/umls\/rxnorm\/"
+            }
+          ],
+          "text" : "Levothyroxine 75 mcg"
+        },
+        "note" : "Take on empty stomach at least 30 minutes before eating",
+        "patient" : {
+          "display" : "Salinas, Candace",
+          "reference" : "Patient\/19035"
+        },
+        "prescriber" : {
+          "display" : "Troy Monken",
+          "reference" : "Practitioner\/24763"
+        },
+        "resourceType" : "MedicationOrder",
+        "status" : "active"
+      }
+    },
+    {
+      "resource" : {
+        "category" : {
+          "coding" : [
+            {
+              "code" : "laboratory",
+              "system" : "http:\/\/hl7.org\/fhir\/observation-category"
+            }
+          ],
+          "text" : "Laboratory"
+        },
+        "code" : {
+          "coding" : [
+            {
+              "code" : "3016-3",
+              "system" : "http:\/\/loinc.org"
+            }
+          ],
+          "text" : "TSH"
+        },
+        "id" : "22",
+        "issued" : "2014-09-04T14:15:00+06:00",
+        "referenceRange" : [
+          {
+            "high" : {
+              "code" : "µU\/mL",
+              "system" : "http:\/\/unitsofmeasure.org",
+              "unit" : "µU\/mL",
+              "value" : 5.5
+            },
+            "low" : {
+              "code" : "µU\/mL",
+              "system" : "http:\/\/unitsofmeasure.org",
+              "unit" : "µU\/mL",
+              "value" : 0.34999999999999998
+            },
+            "text" : "0.350 to 5.500 µU\/mL"
+          }
+        ],
+        "resourceType" : "Observation",
+        "status" : "final",
+        "subject" : {
+          "reference" : "Patient\/19035"
+        },
+        "valueQuantity" : {
+          "code" : "µU\/mL",
+          "system" : "http:\/\/unitsofmeasure.org",
+          "unit" : "µU\/mL",
+          "value" : 3.915
+        }
+      }
+    },
+    {
+      "resource" : {
+        "category" : {
+          "coding" : [
+            {
+              "code" : "laboratory",
+              "system" : "http:\/\/hl7.org\/fhir\/observation-category"
+            }
+          ],
+          "text" : "Laboratory"
+        },
+        "code" : {
+          "coding" : [
+            {
+              "code" : "3026-2",
+              "system" : "http:\/\/loinc.org"
+            }
+          ],
+          "text" : "Thyroxine (T4)"
+        },
+        "id" : "6",
+        "issued" : "2014-09-04T14:15:00+06:00",
+        "referenceRange" : [
+          {
+            "high" : {
+              "code" : "µg\/dL",
+              "system" : "http:\/\/unitsofmeasure.org",
+              "unit" : "µg\/dL",
+              "value" : 12
+            },
+            "low" : {
+              "code" : "µg\/dL",
+              "system" : "http:\/\/unitsofmeasure.org",
+              "unit" : "µg\/dL",
+              "value" : 4.5
+            },
+            "text" : "4.5 - 12 µg\/dL"
+          }
+        ],
+        "resourceType" : "Observation",
+        "status" : "final",
+        "subject" : {
+          "reference" : "Patient\/19035"
+        },
+        "valueQuantity" : {
+          "code" : "µg\/dL",
+          "system" : "http:\/\/unitsofmeasure.org",
+          "unit" : "µg\/dL",
+          "value" : 9.8000000000000007
+        }
+      }
+    }
+  ],
+  "meta" : {
+    "tag" : [
+      {
+        "code" : "1.0.2",
+        "system" : "http:\/\/hl7.org\/fhir\/FHIR-version"
+      }
+    ]
+  },
+  "resourceType" : "Bundle",
+  "timestamp" : "2026-08-20T17:14:43Z",
+  "type" : "collection"
+}

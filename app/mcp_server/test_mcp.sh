@@ -258,17 +258,17 @@ if ! echo "$ingest_response" | jq -e --arg cohort "$fixture_cohort" '
   exit 1
 fi
 
-prefixed_patient_id="$(echo "$ingest_response" | jq -r '.patient_ids[0] // empty')"
-if [ -z "$prefixed_patient_id" ] || [[ "$prefixed_patient_id" != ext-* ]]; then
-  error "Expected prefixed patient id, got '${prefixed_patient_id}'"
+server_patient_id="$(echo "$ingest_response" | jq -r '.patient_ids[0] // empty')"
+if [ -z "$server_patient_id" ]; then
+  error "Expected a non-empty server-assigned patient id, got '${server_patient_id}'"
   exit 1
 fi
 
-log "Fixture ingested for patient ${prefixed_patient_id}; executing MCP workflow validation"
+log "Fixture ingested for patient ${server_patient_id}; executing MCP workflow validation"
 (
   cd "$APP_DIR"
   docker compose exec -T \
-    -e CI_MCP_PATIENT_ID="$prefixed_patient_id" \
+    -e CI_MCP_PATIENT_ID="$server_patient_id" \
     -e CI_MCP_PATIENT_GIVEN="$fixture_given" \
     -e CI_MCP_PATIENT_FAMILY="$fixture_family" \
     -e CI_MCP_PATIENT_BIRTHDATE="$fixture_birthdate" \

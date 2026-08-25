@@ -39,3 +39,7 @@ app/timeseries_model/test_model_real_data.py
 
 # TimeAutoDiff raw data (downloaded for testing, not needed for inference)
 app/synthea_server/timeseries-generative-model/timeautodiff/raw_data/
+
+# Maven build output
+target/
+dependency-reduced-pom.xml

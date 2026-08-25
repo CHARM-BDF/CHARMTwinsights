@@ -124,12 +124,13 @@ class ExternalFHIRIngestRequest(BaseModel):
         }
     )
     datatype: str = Field(
-        "external", 
+        "external",
         description="Data type classification - must be 'external' or 'synthetic'",
         json_schema_extra={
             "example": "external"
         }
     )
+    source_fhir_version: str = Field("R4", description="Source FHIR version: 'R4' or 'DSTU2'")
 
 
 @router.post("/fhir", response_class=JSONResponse)
@@ -137,14 +138,20 @@ async def ingest_external_fhir(request: ExternalFHIRIngestRequest):
     """
     Ingest FHIR bundle from external sources (e.g., mobile apps, wearables, EHRs).
     
-    This endpoint accepts a FHIR Bundle containing patient data from external sources,
-    automatically prefixes patient IDs with 'ext-' to prevent conflicts with synthetic data,
-    applies appropriate CHARM tags for cohort organization, and stores the data in HAPI FHIR.
-    
+    This endpoint accepts a FHIR Bundle containing patient data from external sources
+    (converting from DSTU2 to R4 first if needed), isolates it from synthetic data by
+    letting the server assign new resource ids and moving any incoming ids into an
+    identifier used for conditional-create deduplication, applies appropriate CHARM
+    tags for cohort organization, and stores the data in HAPI FHIR.
+
     ## Features
-    
-    - **ID Prefixing**: All Patient IDs are automatically prefixed with 'ext-' to prevent conflicts
-    - **Reference Updates**: All references to patients throughout the bundle are updated accordingly
+
+    - **ID Isolation**: Resources are stored with server-assigned ids; any incoming id
+      is preserved as an identifier (not reused as the resource id) so imported data
+      cannot collide with existing synthetic or previously imported records
+    - **Identifier-Based Dedup**: Resources carrying an identifier are conditionally
+      created (`ifNoneExist`), so re-submitting the same source data updates rather
+      than duplicates existing records
     - **Transaction Bundles**: Bundles are converted to transaction type for atomic operations
     - **Update Support**: Re-submitting data for the same patient updates existing records
     - **Automatic Tagging**: Data is tagged with CHARM metadata for cohort organization
@@ -181,7 +188,7 @@ async def ingest_external_fhir(request: ExternalFHIRIngestRequest):
     - `cohort_id`: The cohort ID used
     - `datatype`: The datatype classification
     - `patient_count`: Number of patients in the bundle
-    - `patient_ids`: Array of prefixed patient IDs
+    - `patient_ids`: Array of server-assigned patient IDs
     - `tags_applied`: Dictionary of tags applied to resources
     
     ## Error Handling
@@ -197,7 +204,8 @@ async def ingest_external_fhir(request: ExternalFHIRIngestRequest):
     request_data = {
         "bundle": request.bundle,
         "cohort_id": request.cohort_id,
-        "datatype": request.datatype
+        "datatype": request.datatype,
+        "source_fhir_version": request.source_fhir_version
     }
     
     try:
